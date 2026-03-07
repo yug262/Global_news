@@ -1487,3 +1487,21 @@
 }
 [2026-03-07 11:39:34] FINAL: {'category': 'price_action_noise', 'impact_level': 'low', 'reason': 'The headline provides speculative analysis based on past price action rather than a fundamental market-moving event.'}
 ----------------------------------------
+[2026-03-07 11:43:47] TITLE: Meteorologists bet on ‘swing’ to warming El Niño weather cycle
+[2026-03-07 11:43:47] RAW: {
+    "authenticity": "CONTEXT_ONLY",
+    "impact_level": "low",
+    "category": "sector_trend_analysis",
+    "reason": "This is a long-term climate forecast that provides background context for potential future commodity price trends rather than an immediate market-moving event."
+}
+[2026-03-07 11:43:47] FINAL: {'category': 'sector_trend_analysis', 'impact_level': 'low', 'reason': 'This is a long-term climate forecast that provides background context for potential future commodity price trends rather than an immediate market-moving event.'}
+----------------------------------------
+[2026-03-07 11:46:58] TITLE: Bitcoin slips below $68,000 heading into the weekend as dollar posts steepest weekly gain in a year
+[2026-03-07 11:46:58] RAW: {
+    "authenticity": "PRICE_REPORT",
+    "impact_level": "none",
+    "category": "price_action_noise",
+    "reason": "The headline describes past price movements and market performance rather than a new fundamental catalyst."
+}
+[2026-03-07 11:46:58] FINAL: {'category': 'price_action_noise', 'impact_level': 'none', 'reason': 'The headline describes past price movements and market performance rather than a new fundamental catalyst.'}
+----------------------------------------
