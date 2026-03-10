@@ -59,7 +59,8 @@ SCHEMA_TEMPLATE = {
     "text_signal_analysis": {
         "hawkish_dovish_score": 0,
         "risk_on_off_score": 0,
-        "uncertainty_intensity_score": 0
+        "uncertainty_intensity_score": 0,
+        "narrative_shift_score": 0
     },
 
     "core_impact_assessment": {
@@ -73,10 +74,16 @@ SCHEMA_TEMPLATE = {
         }
     },
 
+    "market_regime_context": {
+        "dominant_market_regime": "",
+        "liquidity_condition_assumption": "",
+        "volatility_expectation": ""
+    },
+
     "directional_bias": {
-        "forex": [],
-        "crypto": [],
-        "global_equities": []
+        "forex": [DIRECTIONAL_BIAS_FOREX_ITEM],
+        "crypto": [DIRECTIONAL_BIAS_CRYPTO_ITEM],
+        "global_equities": [DIRECTIONAL_BIAS_EQUITIES_ITEM]
     },
 
     "time_modeling": {
@@ -86,16 +93,19 @@ SCHEMA_TEMPLATE = {
     },
 
     "probability_and_confidence": {
+        "direction_probability_pct": 0,
         "overall_confidence_score": 0,
         "confidence_breakdown": {
             "text_clarity": 0,
             "confirmation_strength": 0,
+            "shock_magnitude": 0,
             "cross_asset_logic_strength": 0
         }
     },
 
     "risk_guidance": {
         "suggested_exposure_range_pct": "",
+        "risk_profile": "",
         "event_cluster_risk": "",
         "volatility_warning": ""
     },
@@ -103,6 +113,7 @@ SCHEMA_TEMPLATE = {
     "event_fatigue_analysis": {
         "similar_news_last_12h": 0,
         "similar_news_last_24h": 0,
+        "similar_events_last_7_days": 0,
         "fatigue_score": 0,
         "novelty_label": ""
     },
@@ -113,6 +124,12 @@ SCHEMA_TEMPLATE = {
         "invalidation_trigger": ""
     },
 
+    "self_critique": {
+        "primary_thesis_weakness": "",
+        "strongest_counter_argument": "",
+        "confidence_adjustment_reason": ""
+    },
+
     "macro_linkage_reasoning": {
         "causal_chain_explanation": ""
     },
@@ -120,13 +137,14 @@ SCHEMA_TEMPLATE = {
     "suggestions": {
         "status": "",
         "summary": "",
-        "buy": [],
-        "sell": [],
-        "watch": [],
-        "avoid": []
+        "buy": [SUGGESTION_ITEM_TEMPLATE],
+        "sell": [SUGGESTION_ITEM_TEMPLATE],
+        "watch": [SUGGESTION_ITEM_TEMPLATE],
+        "avoid": [SUGGESTION_ITEM_TEMPLATE]
     },
 
-    "executive_summary": ""
+    "executive_summary": "",
+    "reasoning_summary": ""
 }
 
 REQUIRED_TOP_LEVEL_KEYS = list(SCHEMA_TEMPLATE.keys())

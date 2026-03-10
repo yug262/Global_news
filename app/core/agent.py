@@ -370,13 +370,15 @@ def classify_news_relevance(
     Returns:
     {
         "category": "...",
-        "should_analyze": bool,
+        "relevance": "Very High Useful | Crypto Useful | Forex Useful | Useful | Medium | Neutral | Noisy",
+        "impact_level": "Low | Medium | High | Important | Most Important",
         "reason": "..."
     }
     """
     default_resp = {
-        "category": "Noisy",
-        "should_analyze": False,
+        "category": "price_action_noise",
+        "relevance": "Noisy",
+        "impact_level": "Low",
         "reason": "Classification failed or skipped"
     }
 
@@ -384,7 +386,6 @@ def classify_news_relevance(
         return default_resp
 
     try:
-        # Pull the exact event context the prompt expects
         filter_ctx = get_filter_context(title, current_news_id=current_news_id)
 
         user_msg = f"""NEWS
@@ -410,7 +411,7 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
             contents=[user_msg],
             config=types.GenerateContentConfig(
                 system_instruction=CLASSIFY_PROMPT,
-                temperature=0.1,
+                temperature=0,
                 max_output_tokens=300,
             ),
         )
@@ -423,23 +424,41 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
             )
 
         text = (response.text or "").strip()
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        json_match = re.search(r"\{.*\}", text, re.DOTALL)
 
         if not json_match:
             return default_resp
 
         json_str = json_match.group(0)
-        if json_str.count('{') > json_str.count('}'):
-            json_str += '}' * (json_str.count('{') - json_str.count('}'))
+        if json_str.count("{") > json_str.count("}"):
+            json_str += "}" * (json_str.count("{") - json_str.count("}"))
 
         data = json.loads(json_str)
 
-        category = str(data.get("category", "Noisy")).strip()
-        should_analyze = bool(data.get("should_analyze", False))
-        reason = str(data.get("reason", "")).strip()
+        category = str(data.get("category") or "price_action_noise").strip()
+        relevance = str(data.get("relevance") or "Noisy").strip()
+        impact_level = str(data.get("impact_level") or "Low").strip()
+        reason = str(data.get("reason") or "").strip()
 
-        # Safety normalization
         allowed_categories = {
+            "macro_data_release",
+            "central_bank_policy",
+            "central_bank_guidance",
+            "institutional_research",
+            "regulatory_policy",
+            "crypto_ecosystem_event",
+            "liquidity_flows",
+            "geopolitical_event",
+            "systemic_risk_event",
+            "commodity_supply_shock",
+            "market_structure_event",
+            "sector_trend_analysis",
+            "sentiment_indicator",
+            "routine_market_update",
+            "price_action_noise",
+        }
+
+        allowed_relevance = {
             "Very High Useful",
             "Crypto Useful",
             "Forex Useful",
@@ -448,15 +467,34 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
             "Neutral",
             "Noisy",
         }
+
+        allowed_impact_levels = {
+            "Low",
+            "Medium",
+            "High",
+            "Important",
+            "Most Important",
+        }
+
         if category not in allowed_categories:
-            category = "Noisy"
-            should_analyze = False
+            category = "price_action_noise"
             if not reason:
                 reason = "Invalid category returned by classifier"
 
+        if relevance not in allowed_relevance:
+            relevance = "Noisy"
+            if not reason:
+                reason = "Invalid relevance returned by classifier"
+
+        if impact_level not in allowed_impact_levels:
+            impact_level = "Low"
+            if not reason:
+                reason = "Invalid impact_level returned by classifier"
+
         return {
             "category": category,
-            "should_analyze": should_analyze,
+            "relevance": relevance,
+            "impact_level": impact_level,
             "reason": reason,
         }
 
@@ -468,13 +506,18 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
 def classify_batch(items: list[tuple[str, str]]) -> list[dict]:
     """
     Classify a batch of (title, description) pairs in parallel.
-    Returns list of relevance dicts in the same order.
+    Returns list of classifier dicts in the same order.
     """
     if not items:
         return []
 
-    default_resp = {"category": "Noisy", "should_analyze": False, "reason": "Classification failed or skipped"}
-    results = [default_resp] * len(items)
+    default_resp = {
+        "category": "price_action_noise",
+        "relevance": "Noisy",
+        "impact_level": "Low",
+        "reason": "Classification failed or skipped"
+    }
+    results = [default_resp.copy() for _ in items]
 
     def _classify(idx, title, desc):
         return idx, classify_news_relevance(title, desc)
@@ -487,11 +530,13 @@ def classify_batch(items: list[tuple[str, str]]) -> list[dict]:
         for future in as_completed(futures):
             try:
                 idx, label = future.result()
+                if not isinstance(label, dict):
+                    label = default_resp.copy()
                 results[idx] = label
-            except Exception:
-                pass
-    return results
+            except Exception as e:
+                _log(f"[CLASSIFY] Batch classification failed: {e}")
 
+    return results
 
 def analyze_news(title: str, published_iso: str, summary: str = "", source: str = "") -> dict | None:
     """
@@ -500,8 +545,30 @@ def analyze_news(title: str, published_iso: str, summary: str = "", source: str 
     analysis_time = datetime.now(timezone.utc).isoformat()
     age_label, age_human, hours_old = _calculate_news_age(published_iso)
 
+    # Run filter agent classification
+    classification = classify_news_relevance(title, summary)
+
+    category = classification.get("category", "price_action_noise")
+    relevance = classification.get("relevance", "Noisy")
+    impact_level = classification.get("impact_level", "Low")
+    reason = classification.get("reason", "")
+
+    # Save classification to DB
+    execute_query(
+        """
+        UPDATE news
+        SET
+            news_category = %s,
+            news_relevance = %s,
+            news_impact_level = %s,
+            news_reason = %s
+        WHERE title = %s
+        """,
+        (category, relevance, impact_level, reason, title),
+    )
+
     # priced-in duplicate check using DB
-    news_check = search_recent_news(title, current_news_id=current_news_id, hours_back=48)
+    news_check = search_recent_news(title, hours_back=48)
     priced_in_by_history = bool(news_check.get("priced_in", False))
 
     for attempt in range(MAX_RETRIES):

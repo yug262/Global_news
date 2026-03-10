@@ -762,16 +762,17 @@ function openModal(article) {
 
                 const rows = validItems.map(item => {
                     const assetName = escapeHtml(item.pair || item.asset || item.index || '');
-                    const dir = item.direction || '';
+                    const rawDir = item.direction || '';
+                    const dir = rawDir.trim() ? rawDir : 'Neutral';
                     const dirLower = dir.toLowerCase();
                     const dirCls = dirLower === 'bullish' ? 'dir-bullish' : dirLower === 'bearish' ? 'dir-bearish' : 'dir-neutral';
                     const borderColor = dirLower === 'bullish' ? 'rgba(0, 212, 170, 0.4)' : dirLower === 'bearish' ? 'rgba(255, 71, 87, 0.4)' : 'rgba(255, 193, 7, 0.4)';
-                    const movePct = item.expected_move_pct || '';
+                    const movePct = item.expected_move_pct || 'N/A';
                     const cardTop = `<div class="forex-pair-card" style="border-left-color:${borderColor}">
                         <div class="forex-pair-header">
                             <span class="forex-pair-name">${assetName}</span>
-                            ${dir ? `<span class="forex-pair-dir ${dirCls}">${escapeHtml(dir)}</span>` : ''}
-                            ${movePct ? `<span style="margin-left:auto; font-size:0.72rem; font-weight:700; color:${dirLower === 'bullish' ? '#00d4aa' : dirLower === 'bearish' ? '#ff4757' : '#ffc107'}; background:${dirLower === 'bullish' ? 'rgba(0,212,170,0.1)' : dirLower === 'bearish' ? 'rgba(255,71,87,0.1)' : 'rgba(255,193,7,0.1)'}; padding:2px 8px; border-radius:4px;">${dirLower === 'bearish' ? '↓' : dirLower === 'bullish' ? '↑' : '→'} ${escapeHtml(String(movePct))}</span>` : ''}
+                            <span class="forex-pair-dir ${dirCls}">${escapeHtml(dir)}</span>
+                            <span style="margin-left:auto; font-size:0.72rem; font-weight:700; color:${dirLower === 'bullish' ? '#00d4aa' : dirLower === 'bearish' ? '#ff4757' : '#ffc107'}; background:${dirLower === 'bullish' ? 'rgba(0,212,170,0.1)' : dirLower === 'bearish' ? 'rgba(255,71,87,0.1)' : 'rgba(255,193,7,0.1)'}; padding:2px 8px; border-radius:4px;">${dirLower === 'bearish' ? '↓' : dirLower === 'bullish' ? '↑' : '→'} ${escapeHtml(String(movePct))}</span>
                         </div>`;
 
                     const parseLevel = (val) => {
@@ -790,7 +791,9 @@ function openModal(article) {
                     const strObj = parseLevel(rawStr) || { pct: (Number(rawStr) || 0) * 10, txt: `${Number(rawStr) || 0}/10` };
 
                     const rawConf = item.confidence;
-                    const confObj = parseLevel(rawConf) || { pct: Number(rawConf) || 0, txt: `${Number(rawConf) || 0}%` };
+                    let nConf = Number(rawConf) || 0;
+                    if (nConf > 0 && nConf <= 10) nConf *= 10;
+                    const confObj = parseLevel(rawConf) || { pct: nConf, txt: nConf > 0 ? `${nConf}%` : 'N/A' };
 
                     return cardTop + `
                         <div class="trade-card-strength">
@@ -863,11 +866,11 @@ function openModal(article) {
                         <div class="analysis-metric"><span class="analysis-metric-label">Reaction</span><span class="analysis-metric-value">${escapeHtml(timeMod.reaction_speed || 'N/A')}</span></div>
                         <div class="analysis-metric"><span class="analysis-metric-label">Fatigue</span><span class="analysis-metric-value">${fatigue.fatigue_score || 0}/10</span></div>
                         <div class="analysis-metric"><span class="analysis-metric-label">Exposure</span><span class="analysis-metric-value">${escapeHtml(String(risk.suggested_exposure_range_pct || 'N/A'))}</span></div>
-                        <div class="analysis-metric"><span class="analysis-metric-label">Probability</span><span class="analysis-metric-value">${prob.direction_probability_pct || 0}%</span></div>
+                        <div class="analysis-metric"><span class="analysis-metric-label">Probability</span><span class="analysis-metric-value">${prob.direction_probability_pct || (prob.overall_confidence_score ? prob.overall_confidence_score * 10 : 'N/A')}${prob.direction_probability_pct || prob.overall_confidence_score ? '%' : ''}</span></div>
                     </div>
                     <div class="analysis-summary-box mt-5">
                         <p><strong>Executive Summary:</strong> ${escapeHtml(analysis.executive_summary || '')}</p>
-                        ${analysis.reasoning_summary ? `<p style="margin-top:0.5rem"><strong>Reasoning:</strong> ${escapeHtml(analysis.reasoning_summary)}</p>` : ''}
+                        ${analysis.reasoning_summary ? `<p style="margin-top:0.5rem"><strong>Reasoning:</strong> ${escapeHtml(analysis.reasoning_summary)}</p>` : (analysis.macro_linkage_reasoning?.causal_chain_explanation ? `<p style="margin-top:0.5rem"><strong>Reasoning:</strong> ${escapeHtml(analysis.macro_linkage_reasoning.causal_chain_explanation)}</p>` : '')}
                     </div>
                     <div class="analysis-bars-section">
                         <div class="analysis-bars-title">Category Impacts</div>
@@ -1027,7 +1030,7 @@ async function fetchPredictionsForModal(newsId) {
             if (!p) return '0.00';
             const v = parseFloat(p);
             if (v < 0.01) return v.toFixed(6);
-            if (v < 1) return v.toFixed(4);
+            if (v < 200) return v.toFixed(4);
             return v.toFixed(2);
         };
 

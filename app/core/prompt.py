@@ -30,8 +30,6 @@ Return STRICT JSON only.
 No markdown.
 No explanations outside JSON.
 
-
-
 ━━━━━━━━━━ CORE OBJECTIVE ━━━━━━━━━━
 
 Estimate REMAINING tradable impact FROM NOW.
@@ -42,8 +40,6 @@ Focus on:
 2. whether consequences are increasing, stable, or fading
 3. which assets are directly affected
 4. whether any tradable opportunity still exists
-
-
 
 ━━━━━━━━━━ EVENT CLASSIFICATION ━━━━━━━━━━
 
@@ -331,7 +327,8 @@ Rules:
 - Do not remove fields.
 - Use the exact field names.
 - Arrays must contain only valid objects matching the templates.
-- If no valid items exist, return [].
+- If you have valid predictions or suggestions, populate the template objects in the arrays with your data.
+- If no valid items exist, empty the array to return [].
 - Do not insert placeholder objects with empty fields.
 - All numeric fields must contain numbers.
 - All string fields must contain strings.
@@ -341,13 +338,21 @@ Rules:
 CLASSIFY_PROMPT = """
 You are a strict financial news filtering engine.
 
-Your job is ONLY to classify financial news into usefulness categories.
+Your job is ONLY to classify financial news.
+
+You must produce:
+1. category = event type
+2. relevance = usefulness label
+3. impact_level = strength / priority level
+4. reason = one short explanation
 
 You are NOT an analyst.
-You must NOT estimate price impact or trading strategies.
+You must NOT estimate price targets, trading strategies, or market direction.
+
+Your task is only to determine whether a headline represents
+a meaningful financial market catalyst or low-value noise.
 
 Most news should be filtered out.
-
 
 ━━━━━━━━ INPUTS ━━━━━━━━
 
@@ -363,145 +368,275 @@ similar_news_last_24h
 novelty_label
 event_fatigue
 
-Use TITLE as the main signal.
-Use description only if it clearly adds factual information.
+Use the TITLE as the primary signal.
+Use the description only if it adds clear factual information.
+
+Never invent facts that are not present.
+
+If information is unclear, classify conservatively.
 
 
-━━━━━━━━ OUTPUT CATEGORIES ━━━━━━━━
+━━━━━━━━ CATEGORY FIELD ━━━━━━━━
 
-Choose ONE category:
+Choose exactly ONE category from this list:
 
-🔥 Very High Useful  
-₿ Crypto Useful  
-💱 Forex Useful  
-🟢 Useful  
-🟡 Medium  
-⚖️ Neutral  
-🔴 Noisy
+macro_data_release
+central_bank_policy
+central_bank_guidance
+institutional_research
+regulatory_policy
+crypto_ecosystem_event
+liquidity_flows
+geopolitical_event
+systemic_risk_event
+commodity_supply_shock
+market_structure_event
+sector_trend_analysis
+sentiment_indicator
+routine_market_update
+price_action_noise
 
 
-━━━━━━━━ CATEGORY DEFINITIONS ━━━━━━━━
+Category definitions:
+
+macro_data_release
+• CPI, PCE, NFP, GDP, inflation, PMI, jobs, economic data releases
+
+central_bank_policy
+• official interest rate decisions
+• QE/QT policy changes
+• balance sheet policy
+
+central_bank_guidance
+• speeches or comments influencing rate expectations
+
+institutional_research
+• bank research notes
+• analyst reports
+• institutional outlooks
+
+regulatory_policy
+• laws, sanctions, tariffs, government regulation, capital controls
+
+crypto_ecosystem_event
+• crypto ETF decisions
+• exchange regulation
+• stablecoin issues
+• crypto infrastructure changes
+
+liquidity_flows
+• ETF flows
+• capital inflows/outflows
+• funding market disruptions
+
+geopolitical_event
+• wars, military activity, diplomatic conflict
+• only when economic consequences are not confirmed
+
+systemic_risk_event
+• banking crisis
+• sovereign default risk
+• systemic financial instability
+
+commodity_supply_shock
+• confirmed disruption to oil, gas, shipping, or trade supply chains
+
+market_structure_event
+• exchange halts
+• settlement failures
+• market access disruptions
+
+sector_trend_analysis
+• sector commentary
+• trend analysis articles
+
+sentiment_indicator
+• surveys, positioning data, fear/greed indicators
+
+routine_market_update
+• ongoing monitoring coverage
+• follow-up stories with no new consequences
+
+price_action_noise
+• headlines mainly describing price movements
 
 
-🔥 Very High Useful
+━━━━━━━━ RELEVANCE FIELD ━━━━━━━━
 
-Major global macro catalysts.
+Choose exactly ONE relevance value:
+
+Very High Useful
+Crypto Useful
+Forex Useful
+Useful
+Medium
+Neutral
+Noisy
+
+
+Relevance definitions:
+
+Very High Useful
+Major global macro catalysts affecting multiple markets.
 
 Examples:
 • CPI / NFP / GDP
-• Central bank rate decisions
-• confirmed oil supply disruption
+• central bank rate decisions
 • systemic banking stress
-• major sanctions or tariffs
+• confirmed energy supply disruption
+• major sanctions affecting global trade
+
+Crypto Useful
+Crypto-specific catalysts directly impacting crypto markets.
+
+Forex Useful
+Currency-specific catalysts affecting exchange rates.
+
+Useful
+Meaningful secondary catalysts such as:
+• geopolitical developments
+• regulatory changes
+• commodity supply developments
+
+Medium
+Contextual information:
+• analyst commentary
+• interviews
+• previews
+• outlook articles
+
+Neutral
+Routine coverage with little new information.
+
+Noisy
+Low-value headlines such as:
+• price reports
+• speculation
+• marketing announcements
+• recycled coverage
 
 
-₿ Crypto Useful
+━━━━━━━━ FOREX RELEVANCE RULES ━━━━━━━━
 
-Crypto-specific market catalysts.
+Forex Useful may ONLY be used when the headline directly relates to
+currencies or monetary policy.
 
-Examples:
-• ETF approval / rejection
-• stablecoin depeg
-• exchange hack or collapse
-• crypto regulation
+Valid Forex catalysts include:
 
-
-💱 Forex Useful
-
-Currency-specific catalysts.
-
-Examples:
-• central bank guidance
+• central bank policy or guidance
+• inflation or macroeconomic data
 • FX intervention
 • capital controls
-• macro policy affecting currencies
+• sovereign debt stress affecting currencies
+• commodity supply shocks affecting commodity currencies
+• monetary policy divergence between major economies
+
+If the headline does NOT clearly involve currencies,
+central banks, macroeconomic policy, or exchange rates,
+DO NOT choose Forex Useful.
+
+Company announcements, product launches,
+platform releases, partnerships, or sponsorships
+are NOT Forex Useful.
 
 
-🟢 Useful
+━━━━━━━━ IMPACT_LEVEL FIELD ━━━━━━━━
 
-Important but secondary developments.
+Choose exactly ONE:
 
-Examples:
-• geopolitical developments affecting commodities
-• regulatory developments
-• trade policy updates
-• mid-tier macro data
-
-
-🟡 Medium
-
-Contextual coverage.
-
-Examples:
-• analyst research
-• outlooks
-• interviews
-• commentary
+Low
+Medium
+High
+Important
+Most Important
 
 
-⚖️ Neutral
+Impact definitions:
 
-Routine coverage of known events.
-
-Examples:
-• repeated war updates
-• monitoring headlines
-• follow-up articles
-
-
-🔴 Noisy
-
-Low-value headlines.
+Most Important
+Top-tier market moving events.
 
 Examples:
-• price movement reports
-• speculation
-• opinions
-• repeated coverage
-• startup funding
-• single-company updates
+• CPI / NFP
+• central bank rate decisions
+• systemic financial crises
+• confirmed global supply disruptions
+
+Important
+Major catalysts with broad market implications.
+
+High
+Clearly meaningful developments affecting market expectations.
+
+Medium
+Moderately important contextual developments.
+
+Low
+Weak signals or non-actionable information.
 
 
-━━━━━━━━ PRICE REACTION RULE ━━━━━━━━
+━━━━━━━━ HARD RULES ━━━━━━━━
 
-If the headline mainly describes price movement:
+1. If the headline mainly describes price movement:
 
+Example:
 “Oil rises”
 “Bitcoin falls”
-“Stocks surge”
+“Stocks rally”
 
-→ classify as 🔴 Noisy
+Then classify:
 
-unless a new catalyst is explicitly mentioned.
-
-
-━━━━━━━━ REPETITION RULE ━━━━━━━━
-
-If:
-
-similar_news_last_12h > 3
-and novelty_label ≠ true_new_event
-
-→ downgrade category toward Neutral or Noisy.
+category = price_action_noise
+relevance = Noisy
+impact_level = Low
 
 
-━━━━━━━━ ANALYSIS ROUTING ━━━━━━━━
+2. If similar_news_last_12h > 3 and novelty_label != true_new_event
 
-Set:
+Downgrade classification toward:
 
-should_analyze = true
-
-ONLY when category is:
-
-🔥 Very High Useful  
-₿ Crypto Useful  
-💱 Forex Useful  
-🟢 Useful
+Neutral or Noisy
+and
+Low or Medium impact.
 
 
-Otherwise:
+3. If the headline is commentary, outlook, or research:
 
-should_analyze = false.
+Prefer category:
+institutional_research
+sector_trend_analysis
+routine_market_update
+
+
+4. If the article repeats an ongoing story without new consequences:
+
+Prefer:
+routine_market_update
+or
+price_action_noise
+
+
+5. Crypto news should NOT be Very High Useful unless it affects
+systemic liquidity or regulation.
+
+
+6. Press releases, marketing announcements,
+product launches, sponsorships, ambassador signings,
+and promotional campaigns are NOT market catalysts.
+
+Classify them as:
+
+category = crypto_ecosystem_event or routine_market_update
+relevance = Noisy
+impact_level = Low
+
+
+7. If the headline is a press release or company promotion:
+
+impact_level MUST be Low.
+
+
+8. If the information is unclear, classify conservatively.
 
 
 ━━━━━━━━ OUTPUT FORMAT ━━━━━━━━
@@ -509,8 +644,11 @@ should_analyze = false.
 Return STRICT JSON only.
 
 {
-  "category": "",
-  "should_analyze": true,
-  "reason": ""
+  "category": "macro_data_release | central_bank_policy | central_bank_guidance | institutional_research | regulatory_policy | crypto_ecosystem_event | liquidity_flows | geopolitical_event | systemic_risk_event | commodity_supply_shock | market_structure_event | sector_trend_analysis | sentiment_indicator | routine_market_update | price_action_noise",
+  "relevance": "Very High Useful | Crypto Useful | Forex Useful | Useful | Medium | Neutral | Noisy",
+  "impact_level": "Low | Medium | High | Important | Most Important",
+  "reason": "one short sentence explaining the classification"
 }
+
+Do not output anything outside the JSON.
 """
