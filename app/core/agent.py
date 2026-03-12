@@ -371,14 +371,12 @@ def classify_news_relevance(
     {
         "category": "...",
         "relevance": "Very High Useful | Crypto Useful | Forex Useful | Useful | Medium | Neutral | Noisy",
-        "impact_level": "Low | Medium | High | Important | Most Important",
         "reason": "..."
     }
     """
     default_resp = {
-        "category": "price_action_noise",
-        "relevance": "Noisy",
-        "impact_level": "Low",
+        "category": "None",
+        "relevance": "None",
         "reason": "Classification failed or skipped"
     }
 
@@ -435,9 +433,8 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
 
         data = json.loads(json_str)
 
-        category = str(data.get("category") or "price_action_noise").strip()
-        relevance = str(data.get("relevance") or "Noisy").strip()
-        impact_level = str(data.get("impact_level") or "Low").strip()
+        category = str(data.get("category") or "None").strip()
+        relevance = str(data.get("relevance") or "None").strip()
         reason = str(data.get("reason") or "").strip()
 
         allowed_categories = {
@@ -468,33 +465,19 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
             "Noisy",
         }
 
-        allowed_impact_levels = {
-            "Low",
-            "Medium",
-            "High",
-            "Important",
-            "Most Important",
-        }
-
-        if category not in allowed_categories:
-            category = "price_action_noise"
+        if category not in allowed_categories and category != "None":
+            category = "None"
             if not reason:
                 reason = "Invalid category returned by classifier"
 
-        if relevance not in allowed_relevance:
-            relevance = "Noisy"
+        if relevance not in allowed_relevance and relevance != "None":
+            relevance = "None"
             if not reason:
                 reason = "Invalid relevance returned by classifier"
-
-        if impact_level not in allowed_impact_levels:
-            impact_level = "Low"
-            if not reason:
-                reason = "Invalid impact_level returned by classifier"
 
         return {
             "category": category,
             "relevance": relevance,
-            "impact_level": impact_level,
             "reason": reason,
         }
 
@@ -512,9 +495,8 @@ def classify_batch(items: list[tuple[str, str]]) -> list[dict]:
         return []
 
     default_resp = {
-        "category": "price_action_noise",
-        "relevance": "Noisy",
-        "impact_level": "Low",
+        "category": "None",
+        "relevance": "None",
         "reason": "Classification failed or skipped"
     }
     results = [default_resp.copy() for _ in items]
@@ -545,27 +527,8 @@ def analyze_news(title: str, published_iso: str, summary: str = "", source: str 
     analysis_time = datetime.now(timezone.utc).isoformat()
     age_label, age_human, hours_old = _calculate_news_age(published_iso)
 
-    # Run filter agent classification
-    classification = classify_news_relevance(title, summary)
-
-    category = classification.get("category", "price_action_noise")
-    relevance = classification.get("relevance", "Noisy")
-    impact_level = classification.get("impact_level", "Low")
-    reason = classification.get("reason", "")
-
-    # Save classification to DB
-    execute_query(
-        """
-        UPDATE news
-        SET
-            news_category = %s,
-            news_relevance = %s,
-            news_impact_level = %s,
-            news_reason = %s
-        WHERE title = %s
-        """,
-        (category, relevance, impact_level, reason, title),
-    )
+    # Note: Filter agent classification (category, relevance) is now handled 
+    # upstream by the scrapers (monitor.py/scraper.py) to save tokens and time.
 
     # priced-in duplicate check using DB
     news_check = search_recent_news(title, hours_back=48)
@@ -692,6 +655,8 @@ def analyze_news(title: str, published_iso: str, summary: str = "", source: str 
                 reaction_pct: {reaction_pct}
                 atr_pct_reference: {atr_pct_reference}
                 reaction_status: {reaction_status}
+                asset_movements_since_publish:
+                {movement_text}
 
                 MARKET DATA
                 forex: {json.dumps(market_data.get("forex", {}))}
@@ -1110,8 +1075,8 @@ def create_predictions(news_id: int, analysis: dict):
                         except Exception:
                             pass
                     if start_price is None:
-                        _log(f"[PRED] No price for {symbol}, skipping")
-                        continue
+                        _log(f"[PRED] No price for {symbol}, setting start_price to 0")
+                        start_price = 0.0
 
                 if direction.lower() in ("positive", "bullish", "up"):
                     target_price = start_price * (1 + predicted_move / 100)
