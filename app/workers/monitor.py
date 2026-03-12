@@ -65,7 +65,7 @@ RSS_FEEDS = [
     "https://www.france24.com/en/asia-pacific/rss",
     "https://www.france24.com/en/middle-east/rss"
 ]
-FETCH_INTERVAL = 30  # seconds
+FETCH_INTERVAL = 30  # second
 
 # ==============================
 # HELPER FUNCTIONS
