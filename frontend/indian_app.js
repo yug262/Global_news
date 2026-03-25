@@ -141,9 +141,12 @@ function renderRelevanceBadge(relevance) {
     if (!relevance) return '';
     const rel = relevance.toLowerCase();
     let cssClass = 'rel-neutral';
-    if (rel.includes('noisy')) cssClass = 'rel-noisy';
-    else if (rel.includes('very high')) cssClass = 'rel-very-high';
-    else if (rel.includes('crypto') || rel.includes('forex') || rel.includes('useful')) cssClass = 'rel-useful';
+
+    if (rel.includes('very high')) cssClass = 'rel-very-high';
+    else if (rel.includes('high')) cssClass = 'rel-high';
+    else if (rel.includes('useful')) cssClass = 'rel-useful';
+    else if (rel.includes('medium')) cssClass = 'rel-medium';
+    else if (rel.includes('noisy')) cssClass = 'rel-noisy';
 
     const label = relevance.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
     return `<span class="relevance-badge ${cssClass}"><span class="relevance-dot"></span>${escapeHtml(label)}</span>`;
@@ -377,22 +380,57 @@ function renderNewInfoBadge(article) {
 
 
 function renderImpactBadge(article) {
-    if (!article.impact_score) {
-        const isAnalyzing = analyzingArticles.has(article.id);
-        const btnState = isAnalyzing ? 'disabled' : '';
-        const btnClass = isAnalyzing ? 'analyzing' : '';
-        const btnText = isAnalyzing ? '<div class="analyzing-spinner-sm"></div> Analyzing…' : '✨ Analyze';
+    // Priority 1: Generic Macro Impact Score (if exists)
+    let badges = '';
+    if (article.impact_score) {
+        const scoreClass = getScoreClass(article.impact_score);
+        const scoreLabel = getScoreLabel(article.impact_score);
+        badges = `<span class="impact-score-badge ${scoreClass}">⚡ ${article.impact_score}/10 · ${scoreLabel}</span>`;
+    } else {
+        // Priority 2: Indian Market Specific Impact
+        if (article.news_impact_level && article.news_impact_level !== 'None' && article.news_impact_level !== 'Neutral') {
+            const imp = article.news_impact_level.toLowerCase();
+            let css = 'impact-neutral';
+            if (imp === 'positive') css = 'impact-positive';
+            if (imp === 'negative') css = 'impact-negative';
+            if (imp === 'mixed') css = 'impact-mixed';
 
+            badges += `<span class="impact-tag ${css}" style="margin-right:6px">📊 ${article.news_impact_level} Impact</span>`;
+        }
+
+        // Add Sector Impact if present
+        if (article.sector_impact && article.sector_impact !== 'None' && article.sector_impact !== 'Neutral') {
+            const secImp = article.sector_impact.toLowerCase();
+            let secCss = 'impact-neutral';
+            if (secImp === 'positive') secCss = 'impact-positive';
+            if (secImp === 'negative') secCss = 'impact-negative';
+
+            badges += `<span class="impact-tag ${secCss}">🎯 Sector: ${article.sector_impact}</span>`;
+        }
+    }
+
+    // Always show Analyze Button (even if analyzed)
+    const isAnalyzing = analyzingArticles.has(article.id);
+    const btnState = isAnalyzing ? 'disabled' : '';
+    const btnClass = isAnalyzing ? 'analyzing' : '';
+    const btnText = isAnalyzing ? '<div class="analyzing-spinner-sm"></div> Analyzing…' : '✨ Analyze';
+
+    const analyzeBtnHtml = `
+        <button class="analyze-btn analyze-btn-sm ${btnClass}" data-id="${article.id}" ${btnState} onclick="event.stopPropagation(); analyzeArticle(${article.id}, this)">
+             ${btnText}
+        </button>
+    `;
+
+    if (badges) {
         return `
-            <button class="analyze-btn analyze-btn-sm ${btnClass}" data-id="${article.id}" ${btnState} onclick="event.stopPropagation(); analyzeArticle(${article.id}, this)">
-                 ${btnText}
-            </button>
+            <div class="card-impact-stack">
+                <div class="card-badges-row">${badges}</div>
+                <div class="card-analyze-row">${analyzeBtnHtml}</div>
+            </div>
         `;
     }
 
-    const scoreClass = getScoreClass(article.impact_score);
-    const scoreLabel = getScoreLabel(article.impact_score);
-    return `<span class="impact-score-badge ${scoreClass}">⚡ ${article.impact_score}/10 · ${scoreLabel}</span>`;
+    return analyzeBtnHtml;
 }
 
 function renderPredictionBadge(article) {
@@ -436,7 +474,7 @@ function renderSuggestionsTab(article) {
         try {
             const parsed = JSON.parse(article.analysis_data);
             if (parsed.suggestions) suggestions = parsed.suggestions;
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // Try fallback structure from flat DB
@@ -444,7 +482,7 @@ function renderSuggestionsTab(article) {
         if (typeof article.suggestions_data === 'object') {
             suggestions = article.suggestions_data;
         } else if (typeof article.suggestions_data === 'string') {
-            try { suggestions = JSON.parse(article.suggestions_data); } catch (e) {}
+            try { suggestions = JSON.parse(article.suggestions_data); } catch (e) { }
         }
     }
 
@@ -462,7 +500,7 @@ function renderSuggestionsTab(article) {
     }
 
     const st = suggestions.status || 'failed';
-    
+
     if (st === 'failed') {
         return '<p style="color:var(--text-muted); font-size:0.85rem; padding:12px 0">Suggestions unavailable (analysis failed).</p>';
     }
@@ -480,7 +518,7 @@ function renderSuggestionsTab(article) {
     }
 
     let html = '';
-    
+
     if (suggestions.summary) {
         html += `<p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:16px; line-height:1.5; padding:0 4px;">${escapeHtml(suggestions.summary)}</p>`;
     }
@@ -531,7 +569,7 @@ function renderSuggestionsTab(article) {
                 const move = exp_move ? `<span style="background:${g.bg}; color:${g.color}; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:4px;">🎯 Target: ${escapeHtml(String(exp_move))}</span>` : '';
                 const time = time_val ? `<span style="font-size:0.75rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;">⏱️ ${escapeHtml(time_val)}</span>` : '';
                 const conf = confidence ? `<span style="font-size:0.7rem; text-transform:uppercase; border:1px solid var(--border-color); padding:1px 6px; border-radius:4px; color:var(--text-secondary);">Conf: ${escapeHtml(confidence)}</span>` : '';
-                
+
                 html += `
                     <div style="border-left:3px solid ${g.border}; padding-left:12px; background:var(--bg-main); padding:12px; border-radius:0 6px 6px 0; border-top:1px solid var(--border-color); border-right:1px solid var(--border-color); border-bottom:1px solid var(--border-color);">
                         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
@@ -635,7 +673,7 @@ async function analyzeArticle(newsId, btnEl) {
     });
 
     try {
-        const res = await fetch(`${API_BASE}/api/analyze/${newsId}`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/api/indian_analyze/${newsId}`, { method: 'POST' });
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -950,6 +988,44 @@ function openModal(article) {
         descriptionHtml = `<p class="modal-description">${escapeHtml(article.description)}</p>`;
     }
 
+    let indianAnalysisHtml = '';
+    if (article.news_category && article.news_category !== 'None' && article.news_category !== 'routine_market_update') {
+        const sectors = Array.isArray(article.affected_sectors) ? article.affected_sectors : [];
+        const sectorHtml = sectors.length > 0
+            ? `<div class="sector-tags" style="margin-top:8px">${sectors.map(s => `<span class="sector-tag" style="background:var(--accent-1-low); border:1px solid var(--accent-1); color:var(--accent-1); font-weight:700; padding:2px 10px; border-radius:12px; font-size:0.75rem;">${escapeHtml(s)}</span>`).join('')}</div>`
+            : '';
+
+        const imp = (article.news_impact_level || 'Neutral').toLowerCase();
+        let css = 'impact-neutral';
+        if (imp === 'positive') css = 'impact-positive';
+        if (imp === 'negative') css = 'impact-negative';
+        if (imp === 'mixed') css = 'impact-mixed';
+
+        const secImp = (article.sector_impact || 'Neutral').toLowerCase();
+        let secCss = 'impact-neutral';
+        if (secImp === 'positive') secCss = 'impact-positive';
+        if (secImp === 'negative') secCss = 'impact-negative';
+
+        indianAnalysisHtml = `
+            <div class="modal-divider"></div>
+            <div class="ia-flat-display" style="padding: 10px 0;">
+                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px;">
+                    ${renderRelevanceBadge(article.news_relevance)}
+                    ${renderCategoryBadge(article.news_category)}
+                    <span class="impact-tag ${css}">📊 ${article.news_impact_level || 'Neutral'} Impact</span>
+                    ${article.sector_impact && article.sector_impact !== 'None' ? `<span class="impact-tag ${secCss}">🎯 Sector: ${article.sector_impact}</span>` : ''}
+                </div>
+                
+                ${sectorHtml ? `<div style="margin-bottom:15px;"><div style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase; font-weight:700; margin-bottom:4px;">Affected Sectors</div>${sectorHtml}</div>` : ''}
+
+                <div class="ia-reason-box" style="margin-top:10px;">
+                    <div style="font-size:0.75rem; color:var(--accent-1); font-weight:800; text-transform:uppercase; margin-bottom:4px; letter-spacing:0.5px;">Market Intelligence Reason</div>
+                    ${escapeHtml(article.news_reason || 'Analysis details not available.')}
+                </div>
+            </div>
+        `;
+    }
+
     modalBody.innerHTML = `
         ${article.image_url ? `<img class="modal-image" src="${escapeHtml(article.image_url)}" alt="" onerror="this.style.display='none'">` : ''}
         <div class="card-header-row" style="margin-bottom: 12px; margin-top: 8px;">
@@ -966,23 +1042,14 @@ function openModal(article) {
         </div>
         ${descriptionHtml}
         
-        <div class="initial-classification-box">
-            <div class="ic-header">
-                <span class="ic-title">INITIAL CLASSIFICATION</span>
-            </div>
-            <div class="ic-reason">
-                <strong>Reason:</strong> ${escapeHtml(article.news_reason || 'No initial reason provided.')}
-            </div>
-        </div>
-
-        ${analysisHtml}
+        ${indianAnalysisHtml}
         <a href="${escapeHtml(article.link)}" target="_blank" rel="noopener noreferrer" class="read-article-btn">
             Read Full Article →
         </a>
     `;
 
     const modalEl = modalOverlay.querySelector('.modal');
-    if (analysis) {
+    if (analysis || indianAnalysisHtml) {
         modalEl.classList.add('modal-expanded');
         // Fetch predictions if analysis exists
         if (article.prediction_count > 0 || article.impact_score) {
@@ -1043,24 +1110,24 @@ async function fetchPredictionsForModal(newsId) {
                 const dirColor = isBull ? 'var(--bullish)' : (isBear ? 'var(--bearish)' : 'var(--text-muted)');
 
                 // Map status to our new classes
-                const statusCls = status === 'expired' ? 'missed' 
-                               : status === 'wrong' ? 'missed' 
-                               : status === 'overperformed' ? 'underrated'
-                               : status === 'underperformed' ? 'overstated'
-                               : status;
+                const statusCls = status === 'expired' ? 'missed'
+                    : status === 'wrong' ? 'missed'
+                        : status === 'overperformed' ? 'underrated'
+                            : status === 'underperformed' ? 'overstated'
+                                : status;
 
                 const finalMove = p.final_move_pct != null ? parseFloat(p.final_move_pct).toFixed(2) : (p.last_move_pct != null ? parseFloat(p.last_move_pct).toFixed(2) : '0.00');
                 const mfeRaw = p.mfe_pct != null ? parseFloat(p.mfe_pct) : 0;
-                
+
                 // MFE & Target Signs
                 const mfeSign = isBear ? -1 : 1;
                 const mfeDisplay = (mfeSign * mfeRaw).toFixed(2);
                 const mfePrefix = mfeSign * mfeRaw > 0 ? '+' : '';
-                
+
                 const targetPctRaw = p.predicted_move_pct ? parseFloat(p.predicted_move_pct) : 0;
                 let targetNum = isBear ? -targetPctRaw : targetPctRaw; // Real % move
                 const targetDisplay = (isBear ? '-' : '+') + targetPctRaw;
-                
+
                 // Absolute colors
                 const curPct = parseFloat(finalMove);
                 const moveColor = curPct > 0 ? 'var(--bullish)' : (curPct < 0 ? 'var(--bearish)' : 'var(--text-muted)');
@@ -1413,12 +1480,13 @@ function renderNews(articles) {
 // ---- Fetch Sources ----
 async function fetchSources() {
     try {
-        const res = await fetch(`${API_BASE}/api/sources`);
+        const res = await fetch(`${API_BASE}/api/indian_sources`);
         const json = await res.json();
+
         if (json.status === 'success') {
             // Keep the "All Sources" button
             const allBtn = filtersContainer.querySelector('[data-source="all"]');
-            
+
             // Remove all other pills
             const existingPills = filtersContainer.querySelectorAll('.filter-pill:not([data-source="all"])');
             existingPills.forEach(p => p.remove());
@@ -1451,7 +1519,7 @@ async function fetchSources() {
 function formatSymbol(sym) {
     if (!sym) return '';
     sym = sym.toUpperCase();
-    
+
     // Hardcoded common indices/commodities
     const friendlyNames = {
         'GC=F': 'Gold',
@@ -1471,7 +1539,7 @@ function formatSymbol(sym) {
         'DX-Y.NYB': 'US Dollar Index',
         'ZN=F': '10-Year T-Note'
     };
-    
+
     if (friendlyNames[sym]) {
         return friendlyNames[sym];
     }
@@ -1482,11 +1550,11 @@ function formatSymbol(sym) {
         let pair = sym.replace('=X', '').trim();
         // e.g. USDCNY -> USD/CNY
         if (pair.length === 6) {
-            return `${pair.substring(0,3)}/${pair.substring(3,6)}`; 
+            return `${pair.substring(0, 3)}/${pair.substring(3, 6)}`;
         }
         return pair;
     }
-    
+
     if (sym.endsWith('-USD')) {
         return sym.replace('-USD', '');
     }
@@ -1505,7 +1573,7 @@ async function fetchNews() {
     showRefreshIndicator();
 
     try {
-        let url = `${API_BASE}/api/news?today_only=false`;
+        let url = `${API_BASE}/api/indian_news?today_only=false`;
         if (currentSource && currentSource !== 'all') {
             url += `&source=${encodeURIComponent(currentSource)}`;
         }
@@ -1549,7 +1617,7 @@ async function fetchNews() {
 // ---- Fetch Footer Stats ----
 async function fetchStats() {
     try {
-        const res = await fetch(`${API_BASE}/api/stats`);
+        const res = await fetch(`${API_BASE}/api/indian_stats`);
         const json = await res.json();
         if (json.status === 'success') {
             const d = json.data;

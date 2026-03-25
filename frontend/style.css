@@ -1093,8 +1093,29 @@ body {
 
 .card-footer-right {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-end;
     gap: 8px;
+    flex-shrink: 0;
+}
+
+.card-impact-stack {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+}
+
+.card-badges-row {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.card-analyze-row {
+    display: flex;
+    justify-content: flex-end;
 }
 
 .card-time {
@@ -3295,4 +3316,77 @@ body {
         width: 38px;
         height: 38px;
     }
+}
+
+/* =========================================
+   Indian Market AI Analysis Styles
+   ========================================= */
+
+.relevance-badge.rel-very-high { background: rgba(255, 71, 87, 0.15); color: #ff4757; border: 1px solid rgba(255, 71, 87, 0.3); }
+.relevance-badge.rel-high { background: rgba(255, 107, 122, 0.1); color: #ff6b7a; border: 1px solid rgba(255, 107, 122, 0.2); }
+.relevance-badge.rel-useful { background: rgba(0, 212, 170, 0.1); color: #00d4aa; border: 1px solid rgba(0, 212, 170, 0.3); }
+.relevance-badge.rel-medium { background: rgba(241, 196, 15, 0.1); color: #f1c40f; border: 1px solid rgba(241, 196, 15, 0.3); }
+.relevance-badge.rel-neutral { background: rgba(149, 165, 166, 0.1); color: #95a5a6; border: 1px solid rgba(149, 165, 166, 0.3); }
+.relevance-badge.rel-noisy { background: rgba(0, 0, 0, 0.2); color: #55556a; border: 1px solid var(--border); }
+
+.impact-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.impact-positive { background: rgba(0, 212, 170, 0.15); color: #00d4aa; }
+.impact-negative { background: rgba(255, 71, 87, 0.15); color: #ff4757; }
+.impact-mixed { background: rgba(241, 196, 15, 0.15); color: #f1c40f; }
+.impact-neutral { background: rgba(149, 165, 166, 0.15); color: #95a5a6; }
+
+.sector-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.sector-tag {
+    padding: 4px 10px;
+    background: rgba(108, 99, 255, 0.1);
+    border: 1px solid rgba(108, 99, 255, 0.2);
+    color: #a29bfe;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+/* --- Simplified IA Display --- */
+.ia-flat-display {
+    border-top: 1px solid var(--border);
+    margin-top: 10px;
+}
+
+.ia-reason-box {
+    background: rgba(108, 99, 255, 0.05);
+    border-left: 3px solid var(--accent-1);
+    padding: 16px;
+    border-radius: 4px 8px 8px 4px;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--text-primary);
+    position: relative;
+    overflow: hidden;
+}
+
+.ia-reason-box::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 100px;
+    height: 100%;
+    background: linear-gradient(to right, transparent, rgba(108, 99, 255, 0.03));
+    pointer-events: none;
 }

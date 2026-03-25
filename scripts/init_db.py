@@ -34,6 +34,24 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_news_source ON news(source);",
 ]
 
+CREATE_INDIAN_NEWS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS indian_news (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    link TEXT NOT NULL,
+    title_hash VARCHAR(255) UNIQUE NOT NULL,
+    published TIMESTAMPTZ NOT NULL,
+    source VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+CREATE_INDIAN_NEWS_INDEXES_SQL = [
+    "CREATE INDEX IF NOT EXISTS idx_inews_published ON indian_news(published DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_inews_hash ON indian_news(title_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_inews_source ON indian_news(source);",
+]
+
 
 def create_database():
     """Create the database if it doesn't exist."""
@@ -141,6 +159,29 @@ def migrate_schema():
         conn.close()
 
 
+def create_indian_news_table():
+    """Create the indian_news table and indexes, and apply migrations."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        cur = conn.cursor()
+        cur.execute(CREATE_INDIAN_NEWS_TABLE_SQL)
+        for idx_sql in CREATE_INDIAN_NEWS_INDEXES_SQL:
+            cur.execute(idx_sql)
+            
+        for sql in MIGRATE_ANALYSIS_COLUMNS:
+            cur.execute(sql.replace("ALTER TABLE news ", "ALTER TABLE indian_news "))
+            
+        conn.commit()
+        print("✅ Table 'indian_news' and schema created successfully")
+        cur.close()
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error creating indian_news table: {e}")
+        raise
+    finally:
+        conn.close()
+
+
 CREATE_PREDICTIONS_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS predictions (
     id SERIAL PRIMARY KEY,
@@ -149,7 +190,6 @@ CREATE TABLE IF NOT EXISTS predictions (
     asset TEXT NOT NULL,
     asset_display_name TEXT,
     asset_class TEXT NOT NULL,
-    asset_display_name TEXT,
     direction TEXT NOT NULL,
 
     predicted_move_pct NUMERIC NOT NULL,
@@ -273,4 +313,5 @@ if __name__ == "__main__":
     create_predictions_table()
     create_suggestions_table()
     migrate_schema()
+    create_indian_news_table()
     print("🎉 Database initialization complete!")

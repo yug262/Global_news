@@ -114,13 +114,72 @@ def get_news(source: str = Query(None, description="Filter news by source name")
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/indian_news")
+def get_indian_news(source: str = Query(None, description="Filter news by source name"), 
+             limit: int = Query(1000, description="Max number of articles to return"),
+             today_only: bool = Query(False, description="Only fetch today's news"),
+             relevance: str = Query(None, description="Filter news by relevance"),
+             analyzed_only: bool = Query(False, description="Only fetch analyzed news")):
+    """Get Indian news articles, sorted by newest first."""
+    
+    query = """SELECT id, title, link, published, source, description, image_url,
+        impact_score, impact_summary, affected_markets, affected_sectors, impact_duration,
+        analyzed, created_at, market_mode, usd_bias, crypto_bias, trade_actions,
+        execution_window, confidence, forex_pairs, conviction_score, volatility_regime,
+        dollar_liquidity_state, position_size_percent, safe_haven_flow, research_text,
+        is_new_information, tools_used, analysis_data, news_relevance, news_category,
+        news_impact_level, news_reason
+    FROM indian_news WHERE 1=1"""
+    params: List[Any] = []
+    
+    if today_only:
+        today = datetime.now(timezone.utc).date()
+        query += " AND DATE(published) = %s"
+        params.append(today)
+        
+    if source and source.lower() != "all":
+        query += " AND source = %s"
+        params.append(source)
+    
+    if relevance and relevance.lower() != "all":
+        query += " AND news_relevance = %s"
+        params.append(relevance.lower())
+        
+    if analyzed_only:
+        query += " AND analyzed = TRUE"
+        
+    query += " ORDER BY published DESC LIMIT %s"
+    params.append(limit)
+    
+    try:
+        articles = fetch_all(query, params)
+        # Convert datetime objects to string for JSON serialization
+        for article in articles:
+            if isinstance(article['published'], datetime):
+                article['published'] = article['published'].isoformat()
+            if isinstance(article.get('created_at'), datetime):
+                article['created_at'] = article['created_at'].isoformat()
+
+        return {"status": "success", "count": len(articles), "data": articles}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/sources")
 def get_sources():
-    """Get list of distinct news sources available for today."""
-    today = datetime.now(timezone.utc).date()
-    query = "SELECT DISTINCT source FROM news WHERE DATE(published) = %s ORDER BY source"
+    """Get list of distinct news sources available."""
+    query = "SELECT DISTINCT source FROM news ORDER BY source"
     try:
-         sources = fetch_all(query, (today,))
+         sources = fetch_all(query)
+         return {"status": "success", "data": [s['source'] for s in sources]}
+    except Exception as e:
+         return {"status": "error", "message": str(e)}
+
+@app.get("/api/indian_sources")
+def get_indian_sources():
+    """Get list of distinct Indian news sources available."""
+    query = "SELECT DISTINCT source FROM indian_news ORDER BY source"
+    try:
+         sources = fetch_all(query)
          return {"status": "success", "data": [s['source'] for s in sources]}
     except Exception as e:
          return {"status": "error", "message": str(e)}
@@ -295,6 +354,42 @@ def read_predictions():
     if os.path.exists(pred_path):
         return FileResponse(pred_path)
     return {"message": "Frontend not found. Please create frontend/predictions.html"}
+
+@app.get("/api/indian_stats")
+def get_indian_stats():
+    """Get dashboard statistics for the footer, for Indian news."""
+    try:
+        row = fetch_one(
+            "SELECT COUNT(*) as total, "
+            "COUNT(CASE WHEN analyzed = true THEN 1 END) as analyzed, "
+            "COUNT(DISTINCT source) as sources "
+            "FROM indian_news"
+        )
+        uptime_seconds = int((datetime.now(timezone.utc) - SERVER_START).total_seconds())
+        return {
+            "status": "success",
+            "data": {
+                "total_articles": row["total"] if row else 0,
+                "analyzed_articles": row["analyzed"] if row else 0,
+                "source_count": row["sources"] if row else 0,
+                "uptime_seconds": uptime_seconds
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/indian_analyze/{news_id}")
+def analyze_single_indian_article(news_id: int):
+    """Placeholder for Indian news analysis."""
+    return {"status": "error", "message": "Analysis coming soon for Indian Markets"}
+
+@app.get("/indian_news")
+def read_indian_news():
+    """Serve the indian_news.html page."""
+    indian_path = os.path.join(frontend_dir, "indian_news.html")
+    if os.path.exists(indian_path):
+        return FileResponse(indian_path)
+    return {"message": "Frontend not found. Please create frontend/indian_news.html"}
 
 # Mount static AFTER explicit routes so /api/* and / are matched first
 app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
