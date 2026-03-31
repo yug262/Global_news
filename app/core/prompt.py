@@ -73,6 +73,26 @@ Economic risks have materially decreased.
 COMMENTARY  
 Opinion, analysis, interview, preview, or research without official action.
 
+━━━━━━━━ EVENT SCALE DETECTION ━━━━━━━━
+
+Before assigning relevance or forex pairs, classify event scale:
+
+LOCAL:
+• single country or isolated event
+• no major global actors involved
+
+REGIONAL:
+• multi-country involvement
+• no global superpower involvement
+
+GLOBAL:
+• includes US, China, Russia, Iran, EU, or affects global trade routes, oil supply, or financial systems
+
+RULE:
+Scale must influence relevance and impact.
+
+GLOBAL events → higher relevance and broader impact  
+LOCAL events → restricted impact and limited forex pairs
 
 ━━━━━━━━━━ INFORMATION VALUE TEST ━━━━━━━━━━
 
@@ -392,7 +412,6 @@ You must output ONLY three things:
 
 Do NOT analyze markets, predict prices, or give trading ideas.
 
-Most news is noise.
 
 
 ━━━━━━━━ STEP 1 — FINANCIAL RELEVANCE CHECK ━━━━━━━━
@@ -439,6 +458,13 @@ CATEGORY GUIDE
 
 macro_data_release
 Actual economic data releases (CPI, NFP, GDP, inflation, PMI).
+MACRO INTERPRETATION RULE:
+
+Inflation ↑ → currency bullish bias  
+Inflation ↓ → currency bearish bias  
+
+Only apply if data is national or region-wide.
+If data is minor or regional → downgrade impact.
 
 central_bank_policy
 Interest rate decisions or official monetary policy changes.
@@ -450,10 +476,10 @@ regulatory_policy
 Sanctions, tariffs, regulations, capital controls.
 
 geopolitical_event
-War developments or geopolitical events affecting trade or energy.
+Confirmed military or geopolitical events affecting local stability, trade routes, or strategic risk premium.
 
 commodity_supply_shock
-Confirmed disruption to oil, gas, shipping or trade supply.
+Confirmed disruption (NOT stabilization) to oil, gas, shipping or trade supply.
 
 systemic_risk_event
 Bank failures or financial stability crises.
@@ -479,6 +505,52 @@ Positioning data, surveys, sentiment metrics.
 price_action_noise
 Headlines mainly describing price movement.
 
+CATEGORY PRIORITY RULES
+
+If multiple categories could apply, use this order of priority:
+
+systemic_risk_event
+commodity_supply_shock
+central_bank_policy
+macro_data_release
+regulatory_policy
+geopolitical_event
+crypto_ecosystem_event
+liquidity_flows
+central_bank_guidance
+institutional_research
+sector_trend_analysis
+sentiment_indicator
+routine_market_update
+price_action_noise
+
+Examples:
+• Bank collapse causing funding stress → systemic_risk_event
+• Oil refinery attack causing supply disruption → commodity_supply_shock
+• Fed rate hike with economic forecasts → central_bank_policy
+• Israel attack on refinery → commodity_supply_shock, not geopolitical_event
+• ETF approval causing large inflows → crypto_ecosystem_event, not liquidity_flows
+
+━━━━━━━━ EVENT SCALE DETECTION ━━━━━━━━
+
+Before assigning relevance or forex pairs, classify event scale:
+
+LOCAL:
+• single country or isolated event
+• no major global actors involved
+
+REGIONAL:
+• multi-country involvement
+• no global superpower involvement
+
+GLOBAL:
+• includes US, China, Russia, Iran, EU, or affects global trade routes, oil supply, or financial systems
+
+RULE:
+Scale must influence relevance and impact.
+
+GLOBAL events → higher relevance and broader impact  
+LOCAL events → restricted impact and limited forex pairs
 
 ━━━━━━━━ STEP 3 — RELEVANCE CLASSIFICATION ━━━━━━━━
 
@@ -522,17 +594,9 @@ Routine financial coverage with little new information.
 Noisy
 Non-financial news, speculation, marketing announcements,
 or price movement commentary.
-
-💱 Forex Useful
-
-DEFAULT ASSUMPTION:
-Most headlines are NOT market catalysts.
 If the headline does not clearly introduce a new economic,
 financial, regulatory, or supply event, it must NOT be classified
-as Very High Useful, Forex Useful, Crypto Useful, or Useful.
-
-
-1. VERY HIGH USEFUL IS EXTREMELY RARE.
+as Very High Useful, Forex Useful, Crypto Useful, or Useful.1. VERY HIGH USEFUL IS EXTREMELY RARE.
 
 Use "Very High Useful" ONLY for:
 
@@ -545,6 +609,13 @@ Use "Very High Useful" ONLY for:
 
 If the headline does NOT clearly match one of these,
 Very High Useful is FORBIDDEN.
+
+CONTEXT RULE:
+
+If similar high-impact events are already active,
+treat new headlines as reinforcement signals even if tone is weak.
+
+Do NOT classify as Neutral if it strengthens an ongoing confirmed event.
 
 
 2. FOREX USEFUL IS RESTRICTED.
@@ -586,6 +657,20 @@ Use "Useful" ONLY when the headline reports:
 If the headline only describes trends, analysis,
 statistics, or expectations → DO NOT use Useful.
 
+Confirmed event priority rule:
+
+If a headline contains both:
+• a confirmed event
+and
+• commentary, analysis, outlook, or expectations
+
+Always classify using the confirmed event first.
+
+Examples:
+• "Fed cuts rates, warns inflation may stay elevated" → central_bank_policy
+• "Israel strikes Iranian port, analysts warn of oil disruption" → geopolitical_event
+• "ECB holds rates, expects slower growth" → central_bank_policy
+
 
 5. TREND, STATISTIC, OR NARRATIVE ARTICLES → NEUTRAL.
 
@@ -616,6 +701,22 @@ likely
 category = institutional_research or sector_trend_analysis
 relevance = Neutral
 
+Exception:
+If the headline contains words like:
+• expected
+• forecast
+• may
+• could
+• likely
+
+BUT also includes:
+• an actual policy decision
+• an actual macro release
+• confirmed sanctions
+• confirmed military action
+• confirmed supply disruption
+
+Then classify based on the confirmed event, not the forecast wording.
 
 7. DATA PREVIEWS → NEUTRAL.
 
@@ -635,6 +736,13 @@ Example:
 category = price_action_noise
 relevance = Noisy
 
+Exception:
+If a price movement headline also includes a confirmed catalyst, classify based on the catalyst, not the price move.
+
+Examples:
+• "Oil jumps after refinery explosion" → commodity_supply_shock
+• "Stocks fall after Fed rate hike" → central_bank_policy
+• "Gold rises after Iran strikes" → geopolitical_event
 
 9. NON-FINANCIAL NEWS → NOISY.
 
@@ -669,6 +777,19 @@ relevance = Noisy
 
 Do NOT classify as systemic_risk_event or Very High Useful
 unless multiple institutions or financial stability are involved.
+
+Exception:
+A single company may qualify as systemic_risk_event if it is:
+• a globally important bank
+• a major clearing house
+• a systemically important exchange
+• a major sovereign-linked institution
+• a dominant payment network
+
+Examples:
+• Credit Suisse crisis → systemic_risk_event
+• Binance collapse → crypto_ecosystem_event or systemic_risk_event depending on scope
+• Visa outage → systemic_risk_event if payment disruption is widespread
 
 
 12. IF UNCERTAIN → DOWNGRADE.

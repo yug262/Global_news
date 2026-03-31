@@ -210,7 +210,7 @@ async def run_scraper_cycle():
     # Track stats per source
     source_stats = {s: {"total": 0, "new": 0, "dup": 0} for s in FEEDS.keys()}
     
-    async with httpx.AsyncClient(headers=HEADERS, verify=False) as client:
+    async with httpx.AsyncClient(headers=HEADERS) as client:
         tasks = []
         for source, urls in FEEDS.items():
             for url in urls:
@@ -250,7 +250,18 @@ async def run_scraper_cycle():
     total_dup = sum(s["dup"] for s in source_stats.values())
     total_all = sum(s["total"] for s in source_stats.values())
     duration = time.time() - start_time
-    logger.info(f"===== Cycle Complete in {duration:.2f}s: {total_new} New, {total_dup} Duplicates, {total_all} Total ArticlesProcessed =====")
+    logger.info(f"===== Cycle Complete in {duration:.2f}s: {total_new} New, {total_dup} Duplicates, {total_all} Total Articles Processed =====")
+
+async def cleanup_old_news():
+    """Deletes articles older than 24 hours from the database."""
+    try:
+        await asyncio.to_thread(
+            execute_query,
+            "DELETE FROM indian_news WHERE published < (NOW() - INTERVAL '24 hours')"
+        )
+        logger.info("Background cleanup: Deleted Indian news articles older than 24h.")
+    except Exception as e:
+        logger.error(f"Cleanup Error: {e}")
 
 async def cleanup_old_news():
     """Deletes articles older than 24 hours from the database."""
