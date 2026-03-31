@@ -73,6 +73,26 @@ Economic risks have materially decreased.
 COMMENTARY  
 Opinion, analysis, interview, preview, or research without official action.
 
+━━━━━━━━ EVENT SCALE DETECTION ━━━━━━━━
+
+Before assigning relevance or forex pairs, classify event scale:
+
+LOCAL:
+• single country or isolated event
+• no major global actors involved
+
+REGIONAL:
+• multi-country involvement
+• no global superpower involvement
+
+GLOBAL:
+• includes US, China, Russia, Iran, EU, or affects global trade routes, oil supply, or financial systems
+
+RULE:
+Scale must influence relevance and impact.
+
+GLOBAL events → higher relevance and broader impact  
+LOCAL events → restricted impact and limited forex pairs
 
 ━━━━━━━━━━ INFORMATION VALUE TEST ━━━━━━━━━━
 
@@ -392,7 +412,6 @@ You must output ONLY three things:
 
 Do NOT analyze markets, predict prices, or give trading ideas.
 
-Most news is noise.
 
 
 ━━━━━━━━ STEP 1 — FINANCIAL RELEVANCE CHECK ━━━━━━━━
@@ -439,6 +458,13 @@ CATEGORY GUIDE
 
 macro_data_release
 Actual economic data releases (CPI, NFP, GDP, inflation, PMI).
+MACRO INTERPRETATION RULE:
+
+Inflation ↑ → currency bullish bias  
+Inflation ↓ → currency bearish bias  
+
+Only apply if data is national or region-wide.
+If data is minor or regional → downgrade impact.
 
 central_bank_policy
 Interest rate decisions or official monetary policy changes.
@@ -450,10 +476,10 @@ regulatory_policy
 Sanctions, tariffs, regulations, capital controls.
 
 geopolitical_event
-War developments or geopolitical events affecting trade or energy.
+Confirmed military or geopolitical events affecting local stability, trade routes, or strategic risk premium.
 
 commodity_supply_shock
-Confirmed disruption to oil, gas, shipping or trade supply.
+Confirmed disruption (NOT stabilization) to oil, gas, shipping or trade supply.
 
 systemic_risk_event
 Bank failures or financial stability crises.
@@ -479,6 +505,52 @@ Positioning data, surveys, sentiment metrics.
 price_action_noise
 Headlines mainly describing price movement.
 
+CATEGORY PRIORITY RULES
+
+If multiple categories could apply, use this order of priority:
+
+systemic_risk_event
+commodity_supply_shock
+central_bank_policy
+macro_data_release
+regulatory_policy
+geopolitical_event
+crypto_ecosystem_event
+liquidity_flows
+central_bank_guidance
+institutional_research
+sector_trend_analysis
+sentiment_indicator
+routine_market_update
+price_action_noise
+
+Examples:
+• Bank collapse causing funding stress → systemic_risk_event
+• Oil refinery attack causing supply disruption → commodity_supply_shock
+• Fed rate hike with economic forecasts → central_bank_policy
+• Israel attack on refinery → commodity_supply_shock, not geopolitical_event
+• ETF approval causing large inflows → crypto_ecosystem_event, not liquidity_flows
+
+━━━━━━━━ EVENT SCALE DETECTION ━━━━━━━━
+
+Before assigning relevance or forex pairs, classify event scale:
+
+LOCAL:
+• single country or isolated event
+• no major global actors involved
+
+REGIONAL:
+• multi-country involvement
+• no global superpower involvement
+
+GLOBAL:
+• includes US, China, Russia, Iran, EU, or affects global trade routes, oil supply, or financial systems
+
+RULE:
+Scale must influence relevance and impact.
+
+GLOBAL events → higher relevance and broader impact  
+LOCAL events → restricted impact and limited forex pairs
 
 ━━━━━━━━ STEP 3 — RELEVANCE CLASSIFICATION ━━━━━━━━
 
@@ -522,17 +594,9 @@ Routine financial coverage with little new information.
 Noisy
 Non-financial news, speculation, marketing announcements,
 or price movement commentary.
-
-💱 Forex Useful
-
-DEFAULT ASSUMPTION:
-Most headlines are NOT market catalysts.
 If the headline does not clearly introduce a new economic,
 financial, regulatory, or supply event, it must NOT be classified
-as Very High Useful, Forex Useful, Crypto Useful, or Useful.
-
-
-1. VERY HIGH USEFUL IS EXTREMELY RARE.
+as Very High Useful, Forex Useful, Crypto Useful, or Useful.1. VERY HIGH USEFUL IS EXTREMELY RARE.
 
 Use "Very High Useful" ONLY for:
 
@@ -545,6 +609,13 @@ Use "Very High Useful" ONLY for:
 
 If the headline does NOT clearly match one of these,
 Very High Useful is FORBIDDEN.
+
+CONTEXT RULE:
+
+If similar high-impact events are already active,
+treat new headlines as reinforcement signals even if tone is weak.
+
+Do NOT classify as Neutral if it strengthens an ongoing confirmed event.
 
 
 2. FOREX USEFUL IS RESTRICTED.
@@ -586,6 +657,20 @@ Use "Useful" ONLY when the headline reports:
 If the headline only describes trends, analysis,
 statistics, or expectations → DO NOT use Useful.
 
+Confirmed event priority rule:
+
+If a headline contains both:
+• a confirmed event
+and
+• commentary, analysis, outlook, or expectations
+
+Always classify using the confirmed event first.
+
+Examples:
+• "Fed cuts rates, warns inflation may stay elevated" → central_bank_policy
+• "Israel strikes Iranian port, analysts warn of oil disruption" → geopolitical_event
+• "ECB holds rates, expects slower growth" → central_bank_policy
+
 
 5. TREND, STATISTIC, OR NARRATIVE ARTICLES → NEUTRAL.
 
@@ -616,6 +701,22 @@ likely
 category = institutional_research or sector_trend_analysis
 relevance = Neutral
 
+Exception:
+If the headline contains words like:
+• expected
+• forecast
+• may
+• could
+• likely
+
+BUT also includes:
+• an actual policy decision
+• an actual macro release
+• confirmed sanctions
+• confirmed military action
+• confirmed supply disruption
+
+Then classify based on the confirmed event, not the forecast wording.
 
 7. DATA PREVIEWS → NEUTRAL.
 
@@ -635,6 +736,13 @@ Example:
 category = price_action_noise
 relevance = Noisy
 
+Exception:
+If a price movement headline also includes a confirmed catalyst, classify based on the catalyst, not the price move.
+
+Examples:
+• "Oil jumps after refinery explosion" → commodity_supply_shock
+• "Stocks fall after Fed rate hike" → central_bank_policy
+• "Gold rises after Iran strikes" → geopolitical_event
 
 9. NON-FINANCIAL NEWS → NOISY.
 
@@ -670,6 +778,19 @@ relevance = Noisy
 Do NOT classify as systemic_risk_event or Very High Useful
 unless multiple institutions or financial stability are involved.
 
+Exception:
+A single company may qualify as systemic_risk_event if it is:
+• a globally important bank
+• a major clearing house
+• a systemically important exchange
+• a major sovereign-linked institution
+• a dominant payment network
+
+Examples:
+• Credit Suisse crisis → systemic_risk_event
+• Binance collapse → crypto_ecosystem_event or systemic_risk_event depending on scope
+• Visa outage → systemic_risk_event if payment disruption is widespread
+
 
 12. IF UNCERTAIN → DOWNGRADE.
 
@@ -677,8 +798,351 @@ Very High Useful → Useful
 Useful → Neutral  
 Neutral → Noisy
 
+Tie-break rule:
+
+If two relevance levels seem possible, always choose the lower one.
+
+Examples:
+• Useful vs Medium → choose Medium
+• Medium vs Neutral → choose Neutral
+• Neutral vs Noisy → choose Noisy
+
 Never upgrade uncertain news.
 
+13. IF THE FOREX IMPACT IS INDIRECT OR SECONDARY → REMOVE THE PAIR.
+
+Only keep forex pairs with a strong direct transmission channel.
+If another pair is more directly affected, remove the weaker pair.
+
+14. GEOPOLITICAL NEWS MUST HAVE A DIRECT MARKET TRANSMISSION CHANNEL.
+
+Do NOT assign forex pairs for geopolitical headlines unless there is a direct impact on:
+• oil supply
+• gas supply
+• trade routes
+• sanctions
+• local currency stability
+• safe-haven demand
+• central bank expectations
+
+If the geopolitical headline is only political commentary, diplomatic language, election rhetoric, or vague government discussion:
+
+"affected_forex_pairs": []
+
+━━━━━━━━ GEOPOLITICAL ESCALATION SEVERITY ━━━━━━━━
+
+Classify geopolitical events by severity before assigning relevance.
+
+Low Severity:
+• diplomatic comments
+• election rhetoric
+• vague threats
+• political speeches
+• unconfirmed military statements
+• isolated incidents without trade, oil, or shipping impact
+
+→ category = geopolitical_event
+→ relevance = Neutral or Noisy
+→ affected_forex_pairs = []
+
+Medium Severity:
+• confirmed regional military actions
+• limited sanctions
+• localized border conflict
+• attacks without major supply disruption
+• shipping concerns without confirmed disruption
+
+→ category = geopolitical_event
+→ relevance = Useful
+→ affected_forex_pairs limited to directly exposed local currencies only
+
+High Severity:
+• direct military conflict involving major powers
+• confirmed attacks affecting oil, gas, shipping, ports, pipelines
+• closure risk to major trade routes
+• major sanctions affecting trade
+• confirmed disruption to global energy flows
+• broad safe-haven demand
+
+→ category = geopolitical_event or commodity_supply_shock
+→ relevance = Very High Useful only if there is confirmed supply disruption
+→ allow up to 3 forex pairs
+
+Global Macro Severity Trigger:
+If the headline includes:
+• US military involvement
+• Iran military involvement
+• Strait of Hormuz
+• Red Sea shipping disruption
+• major oil producer disruption
+• NATO involvement
+• China-Taiwan escalation
+• Russia-NATO escalation
+
+Additional escalation triggers:
+• direct US-China tariffs
+• major export bans on semiconductors
+• SWIFT restrictions
+• sanctions on major banks
+• sovereign default risk
+• closure of major ports or canals
+• cyberattack on financial infrastructure
+• attacks on pipelines, refineries, LNG terminals, or undersea cables
+
+Then treat the event as a global macro event, not a regional event.
+
+15. SAFE-HAVEN PAIRS ARE RESTRICTED.
+
+Only use USD/JPY or USD/CHF when:
+• war escalation is severe
+• global equities are falling sharply
+• oil or shipping disruption is significant
+• there is a broad risk-off move
+
+Do NOT automatically assign USD/JPY or USD/CHF to every geopolitical headline.
+
+16. SECONDARY MACRO DATA SHOULD NOT GENERATE FOREX PAIRS.
+
+Housing data, mortgage approvals, business sentiment, regional surveys, and minor lending data should usually be classified as Medium.
+
+Unless the release clearly changes central bank expectations:
+
+"affected_forex_pairs": []
+
+17. SINGLE-COMPANY OR CORPORATE REGULATORY STORIES DO NOT GENERATE FOREX PAIRS.
+
+M&A approvals, takeover delays, analyst ratings, company guidance, and corporate legal issues should not generate forex pairs unless they affect:
+• a major bank
+• sovereign debt
+• a strategic sector
+• national regulation
+• financial stability
+
+
+━━━━━━━━ FOREX PAIR EXTRACTION ━━━━━━━━
+
+Only return affected_forex_pairs if ALL conditions below are true:
+
+1. relevance must be:
+• Very High Useful
+• Forex Useful
+• Useful
+
+If relevance is:
+• Medium
+• Neutral
+• Noisy
+
+Then:
+"affected_forex_pairs": []
+
+2. The event must be a strong fresh catalyst, such as:
+• macroeconomic data release
+• central bank policy or guidance
+• FX intervention
+• sovereign stress
+• capital controls
+• confirmed geopolitical escalation
+• confirmed commodity supply disruption
+• confirmed sanctions or trade restrictions
+• major cross-border capital flow disruption
+
+3. Do NOT return forex pairs for:
+• commentary
+• forecasts
+• previews
+• analyst opinions
+• institutional research
+• month-end flows
+• sentiment data
+• price action descriptions
+• routine market updates
+• already priced-in themes
+• generic political comments
+• indirect risk sentiment only
+
+4. Only include pairs with a direct first-order relationship to the headline.
+
+Examples:
+• BOJ hawkish guidance → USD/JPY
+• UK CPI surprise → GBP/USD
+• Eurozone inflation → EUR/USD
+• RBI intervention → USD/INR
+• Oil supply disruption → USD/CAD
+• Israel war escalation → USD/ILS
+• Major safe-haven shock with broad market fear → USD/JPY or USD/CHF
+
+5. Do NOT include:
+• secondary risk-off pairs
+• indirect commodity currencies
+• spillover currencies
+• low-liquidity exotic pairs unless directly mentioned
+• pairs with weak or uncertain impact
+• pairs only affected through general sentiment
+
+6. Pair selection priority:
+• Choose the most directly impacted and most tradable pairs only
+• Remove weaker alternatives if a stronger pair already captures the move
+• If another pair has a clearer transmission channel, remove the weaker pair
+
+7. Maximum pair limit:
+• Strong local event → 1 pair
+• Major macro or central bank event → 1 to 3 pairs
+• Global shock → maximum 3 pairs
+• Never return more than 3 pairs
+
+8. If the forex impact is indirect or secondary:
+"affected_forex_pairs": []
+
+9. Examples:
+
+Iran war escalation with direct oil disruption:
+["USD/CAD", "USD/ILS"]
+
+Extreme Iran war escalation with major global risk-off:
+["USD/CAD", "USD/JPY", "USD/ILS"]
+
+BOJ inflation guidance:
+["USD/JPY"]
+
+Eurozone CPI:
+["EUR/USD"]
+
+UK inflation:
+["GBP/USD"]
+
+RBI intervention:
+["USD/INR"]
+
+Month-end flows:
+[]
+
+Political commentary:
+[]
+
+Generic risk sentiment:
+[]
+
+Weak geopolitical headlines:
+[]
+
+Political commentary:
+[]
+
+Corporate news:
+[]
+
+Housing data:
+[]
+
+MULTI-ASSET CHECK:
+
+If event is GLOBAL:
+• consider impact across oil, gold, FX, equities
+• then select only the strongest direct forex pair
+
+Do NOT limit thinking to a single asset before evaluation.
+
+━━━━━━━━ DIRECT VS INDIRECT FX IMPACT FILTER ━━━━━━━━
+
+Before assigning forex pairs, determine whether the impact is first-order or second-order.
+
+First-order impact:
+• local currency directly affected
+• oil exporter/importer directly affected
+• central bank expectations directly affected
+• sanctions or trade directly affect a country
+• confirmed safe-haven demand
+
+Second-order impact:
+• generic risk sentiment
+• broad equity weakness
+• indirect commodity effects
+• speculative spillovers
+• vague market nervousness
+
+Only first-order impacts may generate forex pairs.
+
+If the impact is second-order only:
+"affected_forex_pairs": []
+
+Examples:
+
+Israel-Lebanon border fighting:
+["USD/ILS"]
+
+US-Iran airstrikes with oil disruption risk:
+["USD/ILS", "USD/CAD"]
+
+Extreme global risk-off from war escalation:
+["USD/ILS", "USD/CAD", "USD/JPY"]
+
+
+━━━━━━━━ REASON QUALITY RULES ━━━━━━━━
+
+Reasons must identify the direct transmission channel AND reflect event scale (local, regional, global).
+
+Bad reasons:
+• "raises uncertainty"
+• "may affect sentiment"
+• "could impact markets"
+• "impacts geopolitical risk"
+
+Good reasons:
+• "Confirmed military escalation increases risk to Israeli assets and local currency stability."
+• "Iran involvement raises risk to oil supply routes and energy markets."
+• "Official rate guidance changes expectations for future monetary policy."
+• "Confirmed sanctions directly affect trade flows and cross-border capital movement."
+
+Never use generic wording unless no direct transmission channel exists.
+
+Reason hierarchy:
+
+state the confirmed event
+explain the direct transmission channel
+mention the directly affected market only if necessary
+
+Template:
+"Confirmed [event] affects [market transmission channel]."
+
+Examples:
+• "Confirmed rate cut changes expectations for future monetary policy."
+• "Confirmed strike on oil infrastructure threatens crude supply flows."
+• "Confirmed sanctions restrict trade and cross-border capital movement."
+
+Reason must follow this structure:
+
+"Confirmed [event] affects [specific transmission channel]."
+
+Avoid generic phrases like:
+• raises uncertainty
+• affects sentiment
+• impacts markets
+
+━━━━━━━━ USEFUL DOWNGRADE FILTER ━━━━━━━━
+
+Do NOT classify as Useful if the headline only contains:
+• commentary
+• warnings
+• threats
+• "could", "may", "might"
+• analysis
+• opinion
+• expected future actions
+• preparation without action
+• diplomatic discussions
+• routine follow-up reporting
+
+These should usually be:
+category = institutional_research, sector_trend_analysis, or routine_market_update
+relevance = Neutral or Noisy
+
+CONTEXT RULE:
+
+If similar high-impact events are already active,
+treat new headlines as reinforcement signals even if tone is weak.
+
+Do NOT classify as Neutral if it strengthens an ongoing confirmed event.
 
 ━━━━━━━━ VERY HIGH USEFUL GATE ━━━━━━━━
 
@@ -691,646 +1155,354 @@ C. Does this affect multiple major asset classes immediately?
 If the answer is not clearly YES,
 "Very High Useful" is forbidden.
 
+Very High Useful override:
+
+The following may qualify as Very High Useful even without macro data or rate decisions:
+
+• confirmed closure of Strait of Hormuz
+• confirmed closure of Suez Canal
+• major oil refinery or pipeline disruption
+• systemic bank failure
+• sovereign default
+• coordinated sanctions on major economies
+• major cyberattack on financial infrastructure
+• confirmed military attack on critical energy infrastructure
+
+These events can affect multiple major asset classes immediately.
+
 
 ━━━━━━━━ OUTPUT FORMAT ━━━━━━━━
 
 Return STRICT JSON only.
 
 {
-  "category": "macro_data_release | central_bank_policy | central_bank_guidance | institutional_research | regulatory_policy | crypto_ecosystem_event | liquidity_flows | geopolitical_event | systemic_risk_event | commodity_supply_shock | market_structure_event | sector_trend_analysis | sentiment_indicator | routine_market_update | price_action_noise",
+  "category": "macro_data_release | central_bank_policy | central_bank_guidance | institutional_research | regulatory_policy | crypto_ecosystem_event | liquidity_flows | geopolitical_event | systemic_risk_event | commodity_supply_shock | sector_trend_analysis | sentiment_indicator | routine_market_update | price_action_noise",
   "relevance": "Very High Useful | Crypto Useful | Forex Useful | Useful | Medium | Neutral | Noisy",
-  "reason": "one short sentence explaining the classification"
+  "reason": "one short sentence explaining the classification",
+  "affected_forex_pairs": []
 }
+
+Additional output rules:
+
+• reason must be a single sentence
+• do not use semicolons
+• do not use bullet points
+• do not mention more than one transmission channel
+• keep reason under 20 words when possible
+• affected_forex_pairs must always be included even if empty
+• never include fields other than:
+
+category
+relevance
+reason
+affected_forex_pairs
 """
 
 INDIAN_MARKET_CLASSIFY_PROMPT ="""
-You are a STRICT rule-based Indian Market Intelligence Engine.
+You are an Indian market news classification engine.
 
-You MUST follow a FIXED DECISION PIPELINE.
-You are NOT allowed to skip steps.
+Your job is to classify financial news using logic, not assumptions.
 
-If any step fails → STOP and classify as price_action_noise.
+━━━━━━━━━━━━━━━━━━
+CORE PRINCIPLE
+━━━━━━━━━━━━━━━━━━
 
-If uncertain:
+Do NOT blindly mark news as Noisy.
+Do NOT overestimate importance.
 
-→ downgrade relevance (Neutral or Medium)
+Every decision must balance:
+• India relevance
+• real economic trigger
+• freshness
+• actionability
 
-→ ONLY classify as price_action_noise if:
-   - no driver exists
-   - no economic linkage exists
+━━━━━━━━━━━━━━━━━━
+STEP 1: INDIA LINKAGE
+━━━━━━━━━━━━━━━━━━
 
-If conflicting signals exist:
-→ choose the more conservative classification (downgrade)
+Check if news affects India.
 
-All decisions must be based ONLY on explicit information in the news.
+VALID:
+• Indian company
+• Indian government / RBI / SEBI
+• Commodity impacting India (oil, gold)
+• Global macro WITH India transmission:
+  - rupee
+  - oil
+  - inflation
+  - interest rates
+  - capital flows
 
-Do NOT hallucinate unknown facts.
-
-HOWEVER:
-Allow direct economic inference from stated facts:
-
-Examples:
-• "summer demand rising" → demand increase for cooling products
-• "Fed rate cut expectations" → liquidity / gold positive signal
-• "oil prices rising" → cost pressure
-
-Inference must be strictly based on explicit drivers mentioned in the news.
-
-Return STRICT JSON only.
-
-Your task is to classify Indian financial news into:
-
-1. category
-2. relevance
-3. sector_impact
-4. affected_sectors
-5. reason
-
-You must NOT predict stock prices.
-Return STRICT JSON only.
-
-━━━━━━━━ STEP 0 — MARKET RELEVANCE GATE (MANDATORY) ━━━━━━━━
-
-Ask FIRST:
-"Does this DIRECTLY or INDIRECTLY affect India?"
-
-Valid ONLY if:
-• Indian company involved
-• Indian policy / RBI / SEBI
-• Commodity impacting India
-• Global macro impacting India
-
-• Global macro affecting India via:
-  - currency movement
-  - commodity prices (gold, oil, metals)
-  - interest rates (Fed)
-  - capital flows (FII)
-
-If corporate event is global:
-
-Check:
-• Is Indian company involved?
-• Is Indian sector directly affected?
-
-If NO:
-→ relevance ≤ Medium
-→ sector_impact = Neutral
-
-If NO:
-
-→ IMMEDIATELY STOP
-
-category = "price_action_noise"
-relevance = "Noisy"
-sector_impact = "None"
-affected_sectors = []
-
-🚨 DO NOT PROCEED FURTHER
-
-🚨 HARD STOP RULE:
-
-If any condition triggers:
-• price_action_noise classification
-• Noisy relevance due to failure
-
-→ IMMEDIATELY STOP processing further steps
-→ RETURN output
-
-DO NOT continue classification after this point
-
-━━━━━━━━ TRIGGER VALIDATION (EARLY CHECK) ━━━━━━━━
-
-If news contains ONLY speculative language:
-• "expected", "may", "could", "anticipation"
-
-AND NO real-world driver is mentioned (macro / demand / policy / supply):
-
-→ classify as price_action_noise
-
-BUT if expectation is linked to:
-• macro (Fed, inflation, yields)
-• demand (seasonal, consumption)
-• supply changes
-• policy direction
-
-→ DO NOT classify as noise
-→ continue classification as sentiment_indicator or global_macro_impact
-
-━━━━━━━━ SIGNAL PRIORITY RULE ━━━━━━━━
-
-If news contains BOTH:
-• price movement (stock up/down)
-• AND a confirmed event (order, deal, earnings, policy)
-
-→ IGNORE price movement
-→ classify based ONLY on the underlying event
-
-━━━━━━━━ STEP 1.5 — CAUSE DETECTION ━━━━━━━━
-
-Identify if news contains a REAL driver:
-
-A) No cause:
-• only price movement
-→ classify as price_action_noise
-
-B) HARD trigger:
-• order, deal, earnings, policy
-→ continue classification
-
-C) SOFT driver (IMPORTANT):
-• demand trends (seasonal, consumption)
-• macro expectations (Fed, inflation)
-• supply changes
-• sector tailwinds
-
-→ classify as VALID SIGNAL (NOT noise)
-→ continue classification
-
-🚨 RULE:
-Soft drivers are NOT noise.
-They represent forward-looking market signals.
-
-━━━━━━━━ PRICE MOVEMENT FILTER ━━━━━━━━
-
-If news only describes:
-• stock price increase/decrease
-• upper/lower circuit
-• market trend (bullish/bearish)
-
-AND no causal driver exists in the text
-
-Before classifying as noise, check:
-
-Does the news mention ANY of:
-• demand change
-• macro factor (Fed, inflation, currency)
-• supply change
-• sector-wide trigger
-
-If YES:
-→ DO NOT classify as noise
-→ proceed to classification
-
-→ IMMEDIATELY RETURN:
-
-{
-  "category": "price_action_noise",
-  "relevance": "Noisy",
-  "sector_impact": "None",
-  "affected_sectors": [],
-  "reason": "News reports only price movement without any confirmed earnings, policy, or business trigger."
-}
-
-━━━━━━━━ EVENT LIFECYCLE FILTER ━━━━━━━━
-
-Classify stage:
-
-• EARLY → new announcement / fresh trigger
-• MID → ongoing process
-• LATE → already completed / priced in
-
-LATE includes:
-• IPO listing day
-• IPO allotment
-• results already reacted
-• known information
-
-🚨 RULE:
-
-If LATE stage:
-
+If NO linkage:
 → category = "price_action_noise"
 → relevance = "Noisy"
-
-Reason MUST say:
-"Event is already known and largely priced in by the market."
-
-━━━━━━━━ NOISE REASONING RULE ━━━━━━━━
-
-If category = price_action_noise OR relevance = Noisy:
-
-→ The reason MUST explicitly explain WHY the news is noise
-
-🚨 MANDATORY:
-Reason MUST reference at least one of:
-• price movement (if present)
-• lack of confirmed trigger
-• already priced-in / late-stage event
-
-The reason must:
-• refer to actual content (e.g., price move, sentiment, no trigger)
-• clearly state absence of fundamental driver
-• NOT use generic phrases like "no impact"
-
-Examples:
-
-✔ Correct:
-"Stock moved due to general market trend without any company-specific trigger or fundamental development."
-
-✔ Correct:
-"News reports only price movement without any earnings, order, or policy driver."
-
-❌ Incorrect:
-"No economic impact."
-
-🚨 OVERRIDE RULE (VERY IMPORTANT):
-
-If ANY macro or sector driver exists in the news:
-• demand trends
-• macro factors (Fed, inflation, currency)
-• supply changes
-• sector-wide movement
-
-→ DO NOT use "lack of trigger" reasoning
-
-→ Reason MUST explain the actual driver instead
-
-━━━━━━━━ STEP 2 — CATEGORY (STRICT LOGIC) ━━━━━━━━
-
-━━━━━━━━ CATEGORY DECISION PRIORITY ━━━━━━━━
-
-Apply in this EXACT order:
-
-1. (Handled earlier in TRIGGER VALIDATION — DO NOT RECHECK)
-
-2. If confirmed company action (order, earnings, deal, IPO)
-→ category = corporate_event
-
-3. If sector-wide movement driven by:
-   • demand (seasonal, consumption)
-   • supply changes
-   • industry tailwinds
-
-→ category = sector_trend
-
-4. If macro/geopolitical factor mentioned (oil, war, Fed, inflation)
-→ category = global_macro_impact
-
-5. If only forecast/opinion
-→ category = sentiment_indicator
-
-6. If only daily price update
-→ category = routine_market_update
-
-🚨 OVERRIDE RULE:
-If BOTH price movement AND real event exist:
-→ ALWAYS choose corporate_event (ignore price)
-
-Pick EXACTLY ONE:
-
-macro_data_release
-rbi_policy
-rbi_guidance
-government_policy
-regulatory_policy
-corporate_event
-sector_trend
-commodity_impact
-global_macro_impact
-liquidity_flows
-institutional_activity
-systemic_risk
-sentiment_indicator
-routine_market_update
-price_action_noise
-
-━━━━━━━━ CATEGORY RULES ━━━━━━━━
-
-macro_data_release
-→ CPI, WPI, GDP, fiscal data
-
-rbi_policy
-→ repo rate / liquidity
-
-rbi_guidance
-→ RBI commentary
-
-government_policy
-→ subsidy, scheme, restriction
-
-regulatory_policy
-→ SEBI, tax, compliance
-
-corporate_event
-→ confirmed earnings / dividend / order / deal / IPO
-
-sector_trend
-→ If multiple companies or an entire sector moves due to:
-• seasonal demand (summer, festive)
-• macro tailwind
-• supply recovery
-• industry-wide shift
-
-→ classify as sector_trend
-→ relevance ≥ Useful
-
-commodity_impact
-→ crude, gold, metals affecting economy (NOT daily price)
-
-global_macro_impact
-→ geopolitics, Fed, global events
-
-liquidity_flows
-→ ETF flows, FII/DII
-
-institutional_activity
-→ broker calls
-
-systemic_risk
-→ default / crisis
-
-sentiment_indicator
-→ forecast / outlook / survey
-
-routine_market_update
-→ daily commodity or index price
-
-price_action_noise
-→ price movement without cause
-
-
-
-━━━━━━━━ HARD CATEGORY RULES ━━━━━━━━
-
-• Forecast / prediction → sentiment_indicator
-• ETF / fund flows → liquidity_flows
-• Analyst calls → institutional_activity
-• Sector re-rating → sector_trend
-• Daily price → routine_market_update
-
-━━━━━━━━ CORPORATE EVENT VALIDATION ━━━━━━━━
-
-Classify as corporate_event ONLY if:
-• confirmed business action has occurred
-
-DO NOT classify as corporate_event if:
-• only discussion / expectation / future plan
-
-EXCEPTION:
-• IPO / stake sale / fundraising → ALWAYS corporate_event
-
-━━━━━━━━ IPO / FUNDRAISING RULE ━━━━━━━━
-
-If news involves:
-• IPO preparation
-• stake sale
-• fundraising
-
-→ classify as corporate_event
-→ even if "in talks"
-
-🚨 IPO / FUNDRAISING PRIORITY RULE:
-
-IPO / fundraising → corporate_event ONLY in EARLY stage
-
-If MID or LATE stage:
-→ apply EVENT LIFECYCLE FILTER (can downgrade to noise)
-
-━━━━━━━━ RE-RATING RULE ━━━━━━━━
-
-If news indicates:
-• valuation benchmark
-• spillover to similar companies
-
-→ category = sector_trend
-→ sector_impact = Positive
-
-━━━━━━━━ STEP 3 — SECTOR MAPPING ━━━━━━━━
-
-Allowed sectors:
-
-Banking, NBFC, IT, Pharma, FMCG, Auto, Realty, Capital Goods,
-Infrastructure, Power, Oil & Gas, Metals, Cement, Telecom,
-PSU, Defence, Railways, Renewable Energy, Chemicals,
-Retail, Logistics, Agri
-
-━━━━━━━━ SECTOR RULES ━━━━━━━━
-
-• Oil ↑ → Oil & Gas (+ FMCG/Aviation if cost impact)
-• Gold / ETF → Metals + Capital Markets
-• Bond yields → Banking + NBFC
-• Govt restriction → FMCG / Consumer
-• Orders / infra → Infrastructure / Capital Goods
-• Smart grid → Power + Infrastructure
-
-🚨 PRIMARY IMPACT RULE:
-
-Assign ONLY direct sectors.
-DO NOT assign indirect or assumed sectors.
-
-Example:
-✔ Oil → Oil & Gas
-✘ Oil → FMCG (unless explicitly mentioned)
-
-━━━━━━━━ SECTOR VALIDATION RULE ━━━━━━━━
-
-Assign sectors ONLY if:
-• demand / cost / regulation / capital flow is affected
-
-DO NOT assign sectors for:
-• marketing news
-• price_action_noise
-• pure sentiment
-
-If no linkage:
-→ sector_impact = "None"
-→ affected_sectors = []
-
-━━━━━━━━ IMPACT REALITY CHECK ━━━━━━━━
+→ reason = "No linkage to Indian markets."
+→ STOP
+
+━━━━━━━━━━━━━━━━━━
+STEP 2: REAL TRIGGER
+━━━━━━━━━━━━━━━━━━
+
+Check if real economic driver exists.
+
+VALID:
+• policy / regulation
+• earnings / order / deal
+• demand / supply change
+• macro driver (oil, currency, inflation, rates)
+• capital flows
+
+INVALID:
+• only price movement
+• general commentary
+• vague statements
+
+If NO real trigger:
+→ category = "price_action_noise"
+→ relevance = "Noisy"
+→ reason = "No real economic trigger."
+→ STOP
+
+━━━━━━━━━━━━━━━━━━
+STEP 3: FRESHNESS
+━━━━━━━━━━━━━━━━━━
+
+Check if news is NEW.
+
+NOT fresh:
+• explains past move
+• "why market fell"
+• "reasons behind rally"
+• repeated known info
+
+If NOT fresh:
+→ category = "price_action_noise"
+→ relevance = "Noisy"
+→ reason = "Post-event explanation without new trigger."
+→ STOP
+
+━━━━━━━━━━━━━━━━━━
+STEP 4: MARKET REACTION
+━━━━━━━━━━━━━━━━━━
+
+Check if market already reacted.
+
+If price already moved:
+
+CASE A: Small / early move
+→ continue evaluation
+
+CASE B: Moderate move
+→ downgrade relevance by one level
+
+CASE C: Large move / clearly priced in
+→ category = "price_action_noise"
+→ relevance = "Noisy"
+→ reason = "Market has largely priced in the news."
+→ STOP
+
+━━━━━━━━━━━━━━━━━━
+STEP 5: ACTIONABILITY
+━━━━━━━━━━━━━━━━━━
 
 Ask:
 
-Does this affect:
-• revenue
-• cost
-• demand
-• regulation
-• liquidity
+"Does this news provide a NEW edge?"
 
-If no direct impact (revenue, cost, demand, regulation, liquidity):
+If NO:
+→ downgrade relevance
 
-BUT indirect or forward-looking signal exists:
+If clearly no edge remains:
+→ classify as Noisy
 
-→ sector_impact = "Neutral"
-→ relevance = "Neutral"
+━━━━━━━━━━━━━━━━━━
+STEP 6: CATEGORY
+━━━━━━━━━━━━━━━━━━
 
-DO NOT classify as None unless completely irrelevant
+Assign ONE:
 
-🚨 Prevents:
-• IPO hype
-• board approvals without execution
-• branding news
+corporate_event
+→ company actions (earnings, orders, deals)
 
-━━━━━━━━ STEP 4 — IMPACT LOGIC ━━━━━━━━
+government_policy
+→ govt decisions
 
-Positive
-→ strong demand increase / inflows / confirmed benefit
+regulatory_policy
+→ SEBI / tax rules
 
-Slightly Positive
-→ positive driver exists but partially offset
+global_macro_impact
+→ oil, war, inflation, currency
 
-Negative
-→ strong cost increase / outflows / restriction
+sector_trend
+→ industry-wide shift
 
-Slightly Negative
-→ negative driver exists but partially mitigated
+liquidity_flows
+→ FII/DII flows
 
-Mixed
-→ clear opposing impacts
+institutional_activity
+→ analyst / broker views
 
-Neutral
-→ informational / no directional effect
+sentiment_indicator
+→ forecasts / outlook
 
-None
-→ no economic linkage
+routine_market_update
+→ daily update
 
+price_action_noise
+→ no signal
 
-━━━━━━━━ IMPACT BALANCING RULE ━━━━━━━━
-
-If BOTH:
-• negative driver (e.g. FPI outflow, currency weakness)
-• AND stabilizing factor (e.g. RBI intervention)
-
-→ classify as Slightly Negative (NOT Neutral)
-
-━━━━━━━━ HARD IMPACT RULES ━━━━━━━━
-
-• Forecast → ALWAYS Neutral
-• Daily price → Neutral
-• Liquidity inflow → Positive
-• Policy restriction → Mixed/Negative
-• Bond yield rise → Negative
-
-━━━━━━━━ IMPACT CALIBRATION RULE ━━━━━━━━
-
-Step 1: Check trigger strength
-
-STRONG TRIGGERS:
-• policy change
-• order win
-• deal / IPO
-• macro shock (oil, war)
-
-→ impact ≠ Neutral
-
-WEAK TRIGGERS:
-• forecast
-• commentary
-• sentiment
-• price movement
-
-→ impact = Neutral or None
-
-━━━━━━━━ FINAL DECISION:
-
-If real economic change → Positive / Negative / Mixed  
-If no real change → Neutral  
-If no linkage → None
-
-━━━━━━━━ RELEVANCE DEPENDENCY RULE ━━━━━━━━
-
-Relevance MUST follow sector_impact:
-
-If:
-• sector_impact = None → relevance ≤ Neutral
-• sector_impact = Neutral → relevance ≤ Neutral
-
-🚨 NEVER assign:
-Useful / High / Very High
-WITHOUT real economic or sector impact
-
-━━━━━━━━ STEP 5 — RELEVANCE ━━━━━━━━
-
-Very High Useful
-→ RBI / crisis
-
-High Useful
-→ major policy / large deal
-
-Useful
-→ sector impact
-
-Medium
-→ research / explanation
-
-Neutral
-→ informational
-
-Noisy
-→ price-only
-
-━━━━━━━━ RELEVANCE DECISION RULE ━━━━━━━━
+━━━━━━━━━━━━━━━━━━
+STEP 7: RELEVANCE
+━━━━━━━━━━━━━━━━━━
 
 Very High Useful:
-→ RBI / crisis / national impact
+• major macro shock
+• currency crash
+• oil spike
+• RBI action
 
 High Useful:
-→ major policy / large corporate deal / macro shift
+• strong macro or policy
 
 Useful:
-→ confirmed sector-level trigger (order, commodity move)
+• clear sector-level impact
 
 Medium:
-→ explanation / preview / forecast
+• opinion / research
 
 Neutral:
-→ informational / PR
+• weak info
 
 Noisy:
-→ price movement only
+• no edge
+• already priced in
+• explanation only
 
-🚨 HARD RULE:
-If no confirmed trigger → NEVER above Neutral
+━━━━━━━━━━━━━━━━━━
+CRITICAL RULES
+━━━━━━━━━━━━━━━━━━
 
-━━━━━━━━ MARKETING / PR FILTER ━━━━━━━━
+• Opinion ≠ trigger  
+• Explanation ≠ signal  
+• Price move ≠ news  
+• Already reacted ≠ always noisy  
+• No trigger = Noisy  
+• No India linkage = Noisy  
+• Weak signal → downgrade  
 
-If news is about:
-• brand ambassador
-• advertising / branding
+━━━━━━━━━━━━━━━━━━
+NOISY USAGE RULE
+━━━━━━━━━━━━━━━━━━
 
-AND no financial impact:
+Use "Noisy" ONLY if:
 
-→ category = corporate_event
-→ relevance = Neutral
-→ sector_impact = Neutral
-→ affected_sectors = []
+• no economic value exists
+• OR fully priced in
+• OR no actionable edge
 
+DO NOT overuse Noisy.
 
-━━━━━━━━ FINAL RULES ━━━━━━━━
+━━━━━━━━━━━━━━━━━━
+GLOBAL NEWS RULE
+━━━━━━━━━━━━━━━━━━
 
-• NO vague labels
-• NO unnecessary sectors
-• NO speculation
-• ALWAYS follow cause → effect
-• Keep reason short and factual
+Global news valid ONLY if:
+• clear India impact exists
 
-━━━━━━━━ FINAL SANITY CHECK ━━━━━━━━
+Else:
+→ Noisy
 
-If ANY of the following:
+━━━━━━━━━━━━━━━━━━━━━━
+TRIGGER STRENGTH RULE
+━━━━━━━━━━━━━━━━━━━━━━
 
-• weak India linkage
-• no confirmed trigger
-• already known event
-• no real economic impact
+Not all corporate events are meaningful.
 
-If weak linkage or uncertainty:
+WEAK (downgrade relevance):
+• stock split
+• IPO subscription/GMP updates
+• minor announcements
+• routine fundraising updates
 
-→ downgrade relevance (Useful → Neutral → Medium)
+STRONG (allow higher relevance):
+• earnings surprise
+• large order/deal
+• major expansion
+• policy-linked business impact
 
-DO NOT automatically classify as price_action_noise
-IF any real driver exists
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INSTITUTIONAL ACTIVITY RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🚨 STOP — RETURN OUTPUT IMMEDIATELY
+Broker views, allocation changes, or investor exits:
 
-━━━━━━━━ OUTPUT FORMAT ━━━━━━━━
+→ default = Medium  
+→ NOT High Useful unless backed by new hard data
+
+━━━━━━━━━━━━━━━━━━━━━━
+INDIRECT IMPACT RULE
+━━━━━━━━━━━━━━━━━━━━━━
+
+If impact requires multiple steps (e.g. global event → rates → FII → India):
+
+→ downgrade relevance by one level
+
+Direct impact = allowed high relevance  
+Indirect impact = max Medium
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IPO CLASSIFICATION RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+IPO related news should be classified as:
+
+• routine_market_update → subscription, GMP, allotment, listing hype
+• corporate_event → ONLY if company announces IPO launch or files DRHP
+
+Default IPO news ≠ corporate_event
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REASSURANCE RULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+If news only provides reassurance, clarification, or status update
+(without new action or policy change):
+
+→ classify as Neutral
+
+Examples:
+• "supply is stable"
+• "no crisis expected"
+• "situation under control"
+
+━━━━━━━━━━━━━━━━━━
+COMMODITY RULE
+━━━━━━━━━━━━━━━━━━
+
+Valid ONLY if:
+• macro trigger exists
+
+Else:
+→ routine_market_update or Noisy
+
+━━━━━━━━━━━━━━━━━━
+REASON RULE
+━━━━━━━━━━━━━━━━━━
+
+Reason must:
+• be ONE sentence
+• explain cause → effect OR lack of signal
+• be factual
+
+━━━━━━━━━━━━━━━━━━
+FINAL OUTPUT
+━━━━━━━━━━━━━━━━━━
 
 Return ONLY:
 
 {
-"category": "...",
-"relevance": "...",
-"sector_impact": "...",
-"affected_sectors": ["...", "..."],
-"reason": "one clear causal sentence"
+  "category": "...",
+  "relevance": "...",
+  "reason": "..."
 }
 """

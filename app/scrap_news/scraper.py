@@ -150,12 +150,19 @@ def parse_relative_time(time_str):
 def extract_time(element):
     if not element:
         return None
+    
+    now = datetime.now(timezone.utc)
+    
     for time_tag in element.find_all('time'):
         if time_tag.has_attr('datetime'):
             try:
                 dt = date_parser.parse(time_tag['datetime'])
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=timezone.utc)
+                # Cap future dates at now
+                if dt > now:
+                    logger.debug(f"Cap future date: {dt} -> {now}")
+                    return now
                 return dt
             except:
                 pass
@@ -163,13 +170,13 @@ def extract_time(element):
         if 'ago' in text:
             parsed = parse_relative_time(text)
             if parsed:
-                return parsed
+                return min(parsed, now)
     for span in element.find_all(['span', 'div', 'p']):
         text = span.get_text(strip=True).lower()
         if 'ago' in text and len(text) < 30:
             parsed = parse_relative_time(text)
             if parsed:
-                return parsed
+                return min(parsed, now)
     return None
 
 # ══════════════════════════════════════════════════════
@@ -211,6 +218,7 @@ def fetch_article_details(link, source):
             result['image_url'] = og_img['content'].strip()
 
         # Published time — priority: meta tags > JSON-LD > <time> tags
+        now = datetime.now(timezone.utc)
         for prop in ['article:published_time', 'og:article:published_time', 'datePublished', 'parsely-pub-date', 'pubdate']:
             meta_time = soup.find('meta', attrs={'property': prop}) or soup.find('meta', attrs={'name': prop})
             if meta_time and meta_time.get('content'):
@@ -218,6 +226,8 @@ def fetch_article_details(link, source):
                     dt = date_parser.parse(meta_time['content'])
                     if dt.tzinfo is None:
                         dt = dt.replace(tzinfo=timezone.utc)
+                    if dt > now:
+                        dt = now
                     result['published'] = dt
                     break
                 except:
@@ -229,10 +239,12 @@ def fetch_article_details(link, source):
                     data = json.loads(script.string)
                     if isinstance(data, list):
                         data = data[0]
-                    if 'datePublished' in data:
+                    if isinstance(data, dict) and 'datePublished' in data:
                         dt = date_parser.parse(data['datePublished'])
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=timezone.utc)
+                        if dt > now:
+                            dt = now
                         result['published'] = dt
                         break
                 except:
@@ -245,6 +257,8 @@ def fetch_article_details(link, source):
                         dt = date_parser.parse(time_tag['datetime'])
                         if dt.tzinfo is None:
                             dt = dt.replace(tzinfo=timezone.utc)
+                        if dt > now:
+                            dt = now
                         result['published'] = dt
                         break
                     except:
@@ -716,14 +730,15 @@ def fetch_and_store_single(fn):
 
         try:
             title_hash = get_hash(article['title'])
+            affected_pairs = c_res.get("affected_forex_pairs") or []
             execute_query(
                 """INSERT INTO news (title, link, title_hash, published, source, description, image_url,
-                                    news_relevance, news_category, news_reason)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    news_relevance, news_category, news_reason, affected_forex_pairs)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (title_hash) DO NOTHING""",
                 (article['title'], article['link'], title_hash, actual_published,
                  article['source'], description, image_url,
-                 relevance, category, reason)
+                 relevance, category, reason, json.dumps(affected_pairs))
             )
             new_count += 1
             
@@ -918,16 +933,19 @@ def shutdown_handler(signum, frame):
 async def async_main():
     tasks = []
     
+    stagger_delay = 2  # seconds between each scraper start
+    
     for source in FAST_SOURCES:
         tasks.append(asyncio.create_task(run_scraper_loop(source, FAST_INTERVAL)))
+        await asyncio.sleep(stagger_delay)
         
     for source in SLOW_SOURCES:
         tasks.append(asyncio.create_task(run_scraper_loop(source, SLOW_INTERVAL)))
-        
-    tasks.append(asyncio.create_task(asyncio.to_thread(run_heavy_scrape)))
+        await asyncio.sleep(stagger_delay)
+
+    # tasks.append(asyncio.create_task(asyncio.to_thread(run_heavy_scrape)))
 
     await asyncio.gather(*tasks, return_exceptions=True)
-
 def main():
     # Signal handlers only work on the main thread
     if threading.current_thread() is threading.main_thread():

@@ -714,16 +714,18 @@ body {
 }
 
 .featured-card .card-title {
-    font-size: 1.25rem;
+    font-size: 1.35rem;
     -webkit-line-clamp: 2;
     line-clamp: 2;
+    line-height: 1.3;
 }
 
 /* ---- News Grid ---- */
 .news-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 24px;
+    align-items: stretch;
 }
 
 /* ---- News Card ---- */
@@ -732,17 +734,17 @@ body {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    height: max-content;
-    padding: 16px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    padding: 20px;
+    gap: 16px;
     cursor: pointer;
-    transition: all var(--transition-slow);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     overflow: hidden;
     text-decoration: none;
     color: inherit;
     animation: cardFadeIn 0.5s ease both;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
 }
 
 .news-card::before {
@@ -770,10 +772,11 @@ body {
 
 /* ---- Card Image ---- */
 .card-image {
-    width: calc(100% + 48px);
-    height: 200px;
-    margin: -24px -24px 0 -24px;
+    width: calc(100% + 40px);
+    height: 180px;
+    margin: -20px -20px 0 -20px;
     overflow: hidden;
+    position: relative;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     flex-shrink: 0;
 }
@@ -790,12 +793,51 @@ body {
     transform: scale(1.05);
 }
 
-/* ---- Card Header Row (replaces inline styles) ---- */
+.card-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.45;
+    color: var(--text-primary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin: 4px 0;
+}
+
+.card-description {
+    font-size: 0.825rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
 .card-header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 4px;
+}
+
+.card-footer {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.card-action-row {
+    margin-top: 16px;
+    display: flex;
+    justify-content: stretch;
 }
 
 .card-header-left {
@@ -3343,8 +3385,70 @@ body {
 
 .impact-positive { background: rgba(0, 212, 170, 0.15); color: #00d4aa; }
 .impact-negative { background: rgba(255, 71, 87, 0.15); color: #ff4757; }
+.impact-slightly-positive { background: rgba(0, 212, 170, 0.08); color: #34d399; }
+.impact-slightly-negative { background: rgba(255, 71, 87, 0.08); color: #fb7185; }
 .impact-mixed { background: rgba(241, 196, 15, 0.15); color: #f1c40f; }
 .impact-neutral { background: rgba(149, 165, 166, 0.15); color: #95a5a6; }
+
+/* =========================================
+   Forex Chart News Markers & Badges
+   ========================================= */
+
+/* News badge styling - floating labels on chart */
+[data-news-badge] {
+    animation: newsSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes newsSlideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+/* Responsive adjustments for chart badges */
+@media (max-width: 1024px) {
+    [data-news-badge] {
+        font-size: 0.68rem;
+        padding: 3px 8px;
+        max-width: 150px;
+    }
+}
+
+@media (max-width: 768px) {
+    [data-news-badge] {
+        font-size: 0.65rem;
+        padding: 2px 6px;
+        max-width: 120px;
+    }
+}
+
+/* ---- News Panel ---- */
+#chartNewsPanel {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(108, 99, 255, 0.4) transparent;
+}
+
+#chartNewsPanel::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chartNewsPanel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chartNewsPanel::-webkit-scrollbar-thumb {
+    background: rgba(108, 99, 255, 0.4);
+    border-radius: 3px;
+}
+
+#chartNewsPanel::-webkit-scrollbar-thumb:hover {
+    background: rgba(108, 99, 255, 0.6);
+}
 
 .sector-tags {
     display: flex;
@@ -3390,3 +3494,158 @@ body {
     background: linear-gradient(to right, transparent, rgba(108, 99, 255, 0.03));
     pointer-events: none;
 }
+
+
+/* ---- Animated News Dot (SVG, applied via class) ---- */
+@keyframes newsDotPulse {
+    0%   { r: 6;  opacity: 0.7; }
+    50%  { r: 11; opacity: 0.2; }
+    100% { r: 6;  opacity: 0.7; }
+}
+
+.news-dot-pulse {
+    animation: newsDotPulse 2s ease-in-out infinite;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+
+/* ---- News Marker Hover Reveal ---- */
+.news-marker-group line,
+.news-marker-group foreignObject {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+
+/* Slide up behavior for above-candle labels */
+.news-marker-group foreignObject {
+    transform: translateY(8px);
+}
+
+.news-marker-group.is-active line,
+.news-marker-group.is-active foreignObject {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+/* Ensure pulse is always visible so user knows news is there */
+.news-dot-pulse {
+    opacity: 0.55;
+    transition: opacity 0.2s;
+}
+
+.news-marker-group.is-active .news-dot-pulse {
+    opacity: 1;
+}
+
+/* ---- Inline Chart News Label (SVG foreignObject) ---- */
+.nml-label {
+    background: rgba(12, 12, 22, 0.95);
+    border: 1px solid rgba(108, 99, 255, 0.45);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.75);
+    transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+    overflow: hidden;
+}
+
+.nml-label:hover {
+    background: rgba(18, 18, 30, 0.98);
+    border-color: rgba(108, 99, 255, 0.85);
+    box-shadow: 0 6px 20px rgba(108, 99, 255, 0.25);
+}
+
+.nml-meta {
+    font-size: 0.62rem;
+    color: rgba(255, 255, 255, 0.48);
+    font-weight: 700;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.3px;
+}
+
+.nml-title {
+    font-size: 0.84rem;
+    font-weight: 700;
+    color: #e2e2f2;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ---- Affected Forex Pairs (Cards & Modal) ---- */
+.affected-pairs-container {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 12px 0;
+    padding: 2px 0;
+}
+
+.affected-pairs-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+}
+
+.pair-pill-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(108, 99, 255, 0.08);
+    border: 1px solid rgba(108, 99, 255, 0.25);
+    color: var(--accent-1);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: inherit;
+}
+
+.pair-pill-btn:hover {
+    background: rgba(108, 99, 255, 0.15);
+    border-color: var(--accent-1);
+    box-shadow: 0 0 12px rgba(108, 99, 255, 0.25);
+    transform: translateY(-1px);
+}
+
+.pair-pill-btn:active {
+    transform: translateY(0);
+    opacity: 0.8;
+}
+
+.pair-pill-icon {
+    font-size: 0.8rem;
+    filter: drop-shadow(0 0 4px var(--accent-1));
+}
+
+/* Featured Card specific adjustment */
+.featured-card .affected-pairs-container {
+    margin-bottom: 16px;
+}
+
+/* Modal specific adjustment */
+.modal-body .affected-pairs-container {
+    margin-top: 4px;
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 8px;
+    border: 1px dashed var(--border-color);
+}
+

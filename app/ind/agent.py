@@ -94,12 +94,17 @@ def _safe_json_loads(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, re.DOTALL)
-        if not match:
+        # Try to find the outermost balanced JSON object
+        # Non-greedy won't help here; instead find first { and attempt parse
+        start = text.find('{')
+        if start == -1:
             raise ValueError("LLM did not return valid JSON")
-        return json.loads(match.group(0))
-
-
+        for end in range(len(text), start, -1):
+            try:
+                return json.loads(text[start:end])
+            except json.JSONDecodeError:
+                continue
+        raise ValueError("LLM did not return valid JSON")
 # =========================================================
 # CLASSIFICATION LAYER
 # =========================================================
@@ -596,9 +601,8 @@ def create_indian_predictions_compact(news_id: int, analysis: dict) -> None:
 
     try:
         execute_query("DELETE FROM predictions WHERE news_id = %s", (news_id,))
-    except Exception:
-        pass
-
+    except Exception as e:
+        _log(f"[INDIA PRED] Failed to delete existing predictions for news_id={news_id}: {e}")
     created = 0
 
     for item in stock_impacts[:5]:
@@ -682,10 +686,9 @@ def create_indian_watchlists_compact(news_id: int, analysis: dict) -> None:
 
     try:
         execute_query("DELETE FROM suggestions WHERE news_id = %s", (news_id,))
-    except Exception:
-        pass
-
-    created = 0
+    except Exception as e:
+        _log(f"[INDIA SUG] Failed to delete existing suggestions for news_id={news_id}: {e}")
+        created = 0
 
     for item in stock_impacts[:5]:
         try:

@@ -71,6 +71,7 @@ function timeAgo(dateStr) {
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now - date;
+    if (diffMs < 0) return 'Just now'; // Handle clock drift gracefully
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
 
@@ -391,8 +392,8 @@ function renderImpactBadge(article) {
         if (article.news_impact_level && article.news_impact_level !== 'None' && article.news_impact_level !== 'Neutral') {
             const imp = article.news_impact_level.toLowerCase();
             let css = 'impact-neutral';
-            if (imp === 'positive') css = 'impact-positive';
-            if (imp === 'negative') css = 'impact-negative';
+            if (imp === 'positive' || imp.includes('slightly positive')) css = imp.includes('slightly') ? 'impact-slightly-positive' : 'impact-positive';
+            if (imp === 'negative' || imp.includes('slightly negative')) css = imp.includes('slightly') ? 'impact-slightly-negative' : 'impact-negative';
             if (imp === 'mixed') css = 'impact-mixed';
 
             badges += `<span class="impact-tag ${css}" style="margin-right:6px">📊 ${article.news_impact_level} Impact</span>`;
@@ -402,8 +403,8 @@ function renderImpactBadge(article) {
         if (article.sector_impact && article.sector_impact !== 'None' && article.sector_impact !== 'Neutral') {
             const secImp = article.sector_impact.toLowerCase();
             let secCss = 'impact-neutral';
-            if (secImp === 'positive') secCss = 'impact-positive';
-            if (secImp === 'negative') secCss = 'impact-negative';
+            if (secImp === 'positive' || secImp.includes('slightly positive')) secCss = secImp.includes('slightly') ? 'impact-slightly-positive' : 'impact-positive';
+            if (secImp === 'negative' || secImp.includes('slightly negative')) secCss = secImp.includes('slightly') ? 'impact-slightly-negative' : 'impact-negative';
 
             badges += `<span class="impact-tag ${secCss}">🎯 Sector: ${article.sector_impact}</span>`;
         }
@@ -997,21 +998,19 @@ function openModal(article) {
 
         const imp = (article.news_impact_level || 'Neutral').toLowerCase();
         let css = 'impact-neutral';
-        if (imp === 'positive') css = 'impact-positive';
-        if (imp === 'negative') css = 'impact-negative';
+        if (imp === 'positive' || imp.includes('slightly positive')) css = imp.includes('slightly') ? 'impact-slightly-positive' : 'impact-positive';
+        if (imp === 'negative' || imp.includes('slightly negative')) css = imp.includes('slightly') ? 'impact-slightly-negative' : 'impact-negative';
         if (imp === 'mixed') css = 'impact-mixed';
 
         const secImp = (article.sector_impact || 'Neutral').toLowerCase();
         let secCss = 'impact-neutral';
-        if (secImp === 'positive') secCss = 'impact-positive';
-        if (secImp === 'negative') secCss = 'impact-negative';
+        if (secImp === 'positive' || secImp.includes('slightly positive')) secCss = secImp.includes('slightly') ? 'impact-slightly-positive' : 'impact-positive';
+        if (secImp === 'negative' || secImp.includes('slightly negative')) secCss = secImp.includes('slightly') ? 'impact-slightly-negative' : 'impact-negative';
 
         indianAnalysisHtml = `
             <div class="modal-divider"></div>
             <div class="ia-flat-display" style="padding: 10px 0;">
                 <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px;">
-                    ${renderRelevanceBadge(article.news_relevance)}
-                    ${renderCategoryBadge(article.news_category)}
                     <span class="impact-tag ${css}">📊 ${article.news_impact_level || 'Neutral'} Impact</span>
                     ${article.sector_impact && article.sector_impact !== 'None' ? `<span class="impact-tag ${secCss}">🎯 Sector: ${article.sector_impact}</span>` : ''}
                 </div>
@@ -1037,7 +1036,7 @@ function openModal(article) {
         </div>
         <h2 class="modal-title">${escapeHtml(article.title)}</h2>
         <div class="modal-timestamps">
-            <span class="modal-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(article.published)} · ${formatTime(article.published)}</span>
+            <span class="modal-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(article.published > article.created_at ? article.created_at : article.published)} · ${formatTime(article.published > article.created_at ? article.created_at : article.published)}</span>
             <span class="modal-timestamp-line"><strong>Scraped:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
         </div>
         ${descriptionHtml}
@@ -1299,10 +1298,13 @@ document.addEventListener('keydown', (e) => {
 
 // ---- Card Timestamp Rendering ----
 function renderCardTimestamps(article) {
+    // Ensure logical display: Source Posted cannot be after Scraped
+    const pubTime = article.published > article.created_at ? article.created_at : article.published;
+    
     return `
         <div class="card-timestamps">
-            <span class="card-timestamp-line"><strong>Published:</strong> ${timeAgo(article.published)} · ${formatTime(article.published)}</span>
-            <span class="card-timestamp-line"><strong>Posted:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
+            <span class="card-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(pubTime)} · ${formatTime(pubTime)}</span>
+            <span class="card-timestamp-line"><strong>Scraped:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
         </div>
     `;
 }
@@ -1718,7 +1720,7 @@ async function init() {
     if (relevanceFilter) {
         relevanceFilter.value = 'all';
     }
-    await Promise.all([fetchSources(), fetchNews(), fetchStats()]);
+    await Promise.all([fetchSources(), fetchNews(), fetchStats(), fetchHolidays()]);
 }
 
 init();
@@ -1729,3 +1731,984 @@ setInterval(() => {
     fetchNews();
     fetchStats();
 }, REFRESH_INTERVAL);
+
+
+// ============================================
+// LIVE TRADE VIEW — CHART PANEL (Fixed)
+// ============================================
+
+let lwChart = null;
+let lwCandleSeries = null;
+let currentChartSymbol = null;
+let chartRefreshTimer = null;
+let chartSearchDebounce = null;
+let isChartPanelOpen = false;
+const istDateFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    hour12: false
+});
+const istTickFormatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+});
+
+
+// ---- Panel Open/Close ----
+function openChartPanel() {
+    isChartPanelOpen = true;
+    const overlay = document.getElementById('chartOverlay');
+    overlay.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+
+    // Load first available pair if nothing selected yet
+    if (!currentChartSymbol) {
+        loadFirstAvailablePair();
+    } else {
+        loadChart(currentChartSymbol);
+    }
+}
+
+function closeChartPanel() {
+    isChartPanelOpen = false;
+    document.getElementById('chartOverlay').style.display = 'none';
+    document.body.style.overflow = '';
+    stopChartRefresh();
+}
+
+// Close on backdrop click
+document.getElementById('chartOverlay').addEventListener('click', function (e) {
+    if (e.target === this) closeChartPanel();
+});
+
+// ESC closes panel
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && isChartPanelOpen) closeChartPanel();
+});
+
+// Close search dropdown when clicking outside
+document.addEventListener('click', function (e) {
+    const drop = document.getElementById('chartSearchDrop');
+    const input = document.getElementById('chartSearchInput');
+    if (drop && input && !drop.contains(e.target) && e.target !== input) {
+        drop.style.display = 'none';
+    }
+});
+
+// ---- Auto-refresh control ----
+function stopChartRefresh() {
+    if (chartRefreshTimer) {
+        clearInterval(chartRefreshTimer);
+        chartRefreshTimer = null;
+    }
+}
+
+function startChartRefresh(symbol) {
+    stopChartRefresh();
+    chartRefreshTimer = setInterval(async () => {
+        if (isChartPanelOpen && currentChartSymbol === symbol) {
+            await refreshChartData(symbol);
+        }
+    }, 3 * 60 * 1000); // every 3 minutes
+}
+
+// ---- Load first pair that has candle data ----
+async function loadFirstAvailablePair() {
+    try {
+        const res = await fetch('/api/nse/pairs?q=TCS');
+        const json = await res.json();
+        if (json.status === 'success' && json.data.length > 0) {
+            await loadChart(json.data[0]);
+            return;
+        }
+        // fallback: get any pair
+        const res2 = await fetch('/api/nse/pairs');
+        const json2 = await res2.json();
+        if (json2.status === 'success' && json2.data.length > 0) {
+            await loadChart(json2.data[0]);
+        }
+    } catch (e) { console.warn('loadFirstAvailablePair error', e); }
+}
+
+// ---- Search ----
+function onChartSearch(value) {
+    clearTimeout(chartSearchDebounce);
+    chartSearchDebounce = setTimeout(() => doChartSearch(value.trim()), 220);
+}
+
+async function doChartSearch(query) {
+    const drop = document.getElementById('chartSearchDrop');
+    if (!query || query.length < 1) {
+        drop.style.display = 'none';
+        return;
+    }
+    try {
+        const url = `/api/nse/pairs?q=${encodeURIComponent(query)}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.status !== 'success' || !json.data.length) {
+            drop.innerHTML = `<div style="padding:10px 14px;color:#888;font-size:0.82rem;">No matching pairs found.</div>`;
+            drop.style.display = 'block';
+            return;
+        }
+        drop.innerHTML = json.data.map(sym => {
+            const parts = sym.split(':');
+            const base = parts[1] || sym;
+            const exchange = parts[0] || '';
+            return `<div
+                onclick="selectChartPair('${sym}')"
+                style="padding:9px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.04);transition:background 0.12s;"
+                onmouseover="this.style.background='rgba(108,99,255,0.15)'"
+                onmouseout="this.style.background='transparent'">
+                <span style="font-weight:700;font-size:0.87rem;color:var(--text-main,#f0f0f0);">${base}</span>
+                <span style="font-size:0.72rem;color:#666;text-transform:uppercase;letter-spacing:0.5px;">${exchange}</span>
+            </div>`;
+        }).join('');
+        drop.style.display = 'block';
+    } catch (e) {
+        drop.style.display = 'none';
+    }
+}
+
+function selectChartPair(symbol) {
+    if (!symbol) return;
+    
+    // Sanitize symbol: "USD/INR" -> "USDINR" (unless it has a prefix like "OANDA:")
+    let cleanSymbol = symbol;
+    if (!symbol.includes(':')) {
+        cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+    
+    console.log('[CHART] Selecting pair:', symbol, '-> Clean:', cleanSymbol);
+    currentChartSymbol = cleanSymbol;
+    
+    // Open the chart panel (which will call loadChart(currentChartSymbol))
+    if (typeof openChartPanel === 'function') {
+        openChartPanel();
+    }
+    
+    const drop = document.getElementById('chartSearchDrop');
+    const input = document.getElementById('chartSearchInput');
+    if (drop) drop.style.display = 'none';
+    if (input) input.value = symbol.split(':')[1] || symbol;
+    
+    // Scroll to chart container
+    const chartContainer = document.getElementById('lwChartContainer');
+    if (chartContainer) {
+        chartContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+// ---- Parse timestamp robustly ----
+function parseToUnixSec(timeStr) {
+    // Server sends "2026-03-27T09:48:00" — treat as UTC by appending Z
+    const s = timeStr.endsWith('Z') || timeStr.includes('+') ? timeStr : timeStr + 'Z';
+    return Math.floor(new Date(s).getTime() / 1000);
+}
+
+// ---- Fetch & render ----
+async function loadChart(symbol) {
+    if (!symbol) return;
+
+    console.log('[LOAD CHART] Starting loadChart with symbol:', symbol);
+
+    // Track selected pair
+    currentChartSymbol = symbol;
+    stopChartRefresh();
+
+    setChartLoading(symbol);
+
+    const data = await fetchCandleData(symbol);
+    if (!data) {
+        console.log('[LOAD CHART] No candle data received');
+        return;
+    }
+
+    console.log('[LOAD CHART] Rendering chart with', data.length, 'candles');
+    window.chartCandleData = data; // Store globally for overlay tracking
+    renderLWChart(data);
+    updateChartStats(symbol, data);
+
+    // Overlay news markers on chart
+    console.log('[LOAD CHART] Calling overlayNewsMarkers...');
+    await overlayNewsMarkers(symbol);
+
+    console.log('[LOAD CHART] Starting chart refresh');
+    startChartRefresh(symbol);
+}
+
+
+// Refresh only adds new candles to existing chart
+async function refreshChartData(symbol) {
+    const data = await fetchCandleData(symbol);
+    if (!data || !lwCandleSeries) return;
+    // Update all data (handles new candles at end)
+    window.chartCandleData = data;
+    lwCandleSeries.setData(data);
+    lwChart.timeScale().scrollToRealTime();
+    updateChartStats(symbol, data);
+
+    // Resync overlay if exists
+    if (typeof syncNewsOverlay === 'function') syncNewsOverlay();
+}
+
+// ---- Fetch news markers for overlay ----
+async function fetchNewsMarkers(symbol) {
+    try {
+        // Extract just the pair name without exchange prefix (e.g., TCS from OANDA:TCS)
+        let pairOnly = symbol;
+        if (symbol && symbol.includes(':')) {
+            pairOnly = symbol.split(':')[1];
+        }
+
+        const url = `/api/nse/news-markers?symbol=${encodeURIComponent(pairOnly)}`;
+        console.log('[NEWS MARKERS] Fetching from URL:', url);
+        const res = await fetch(url);
+        const json = await res.json();
+        console.log('[NEWS MARKERS] Response:', json);
+        if (json.status === 'success' && Array.isArray(json.data)) {
+            console.log('[NEWS MARKERS] Success! Found', json.data.length, 'news items');
+            console.log('[NEWS MARKERS] Data:', json.data);
+            return json.data;
+        }
+        console.log('[NEWS MARKERS] No data in response or invalid status');
+        return [];
+    } catch (err) {
+        console.error('fetchNewsMarkers error:', err);
+        return [];
+    }
+}
+
+// ---- Overlay news markers on chart — Dot-only + hover tooltip ----
+async function overlayNewsMarkers(symbol) {
+    if (!lwChart || !lwCandleSeries) return;
+
+    const container = document.getElementById('lwChartContainer');
+    if (!container) return;
+
+    // Wipe any old overlay
+    const oldContainer = document.getElementById('newsOverlayContainer');
+    if (oldContainer) oldContainer.remove();
+    const oldTooltip = document.getElementById('newsHoverTooltip');
+    if (oldTooltip) oldTooltip.remove();
+
+    // Fetch news for this symbol
+    const newsMarkers = await fetchNewsMarkers(symbol);
+    if (!newsMarkers || newsMarkers.length === 0) {
+        displayNewsPanel([]);
+        return;
+    }
+
+    // Group by 3-min candle bucket
+    chartNewsByTime = {};
+    const newsByTime = {};
+    for (const news of newsMarkers) {
+        const pubTime = parseToUnixSec(news.published);
+        const snapped = Math.floor(pubTime / 180) * 180;
+        if (!newsByTime[snapped]) newsByTime[snapped] = [];
+        newsByTime[snapped].push(news);
+        if (!chartNewsByTime[snapped]) chartNewsByTime[snapped] = [];
+        chartNewsByTime[snapped].push(news);
+    }
+
+    window.chartNewsData = newsMarkers;
+    window.chartNewsByTime = chartNewsByTime;
+    window._newsByTime = newsByTime;
+
+    // ---- Build SVG overlay (dots only) ----
+    const overlayContainer = document.createElement('div');
+    overlayContainer.id = 'newsOverlayContainer';
+    overlayContainer.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;overflow:hidden;';
+    container.appendChild(overlayContainer);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.id = 'newsOverlaySVG';
+    svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible;';
+
+    // Defs for gradient
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = `
+        <radialGradient id="dotGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#a29bfe"/>
+            <stop offset="100%" stop-color="#6c63ff"/>
+        </radialGradient>
+    `;
+    svg.appendChild(defs);
+    overlayContainer.appendChild(svg);
+
+    // One group per time slot: pulse ring + dot + dashed line + label
+    for (const [timeStr, newsAtTime] of Object.entries(newsByTime)) {
+        const time = parseInt(timeStr);
+        const count = newsAtTime.length;
+        const firstNews = newsAtTime[0];
+
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.id = 'news-g-' + time;
+        g.classList.add('news-marker-group');
+        g.style.display = 'none';
+
+        // Pulse ring (positioned at origin; group is moved via transform)
+        const ring = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        ring.classList.add('news-dot-pulse');
+        ring.setAttribute('r', '8');
+        ring.setAttribute('fill', 'none');
+        ring.setAttribute('stroke', '#6c63ff');
+        ring.setAttribute('stroke-width', '1.5');
+        ring.setAttribute('opacity', '0.55');
+
+        // Core dot
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('r', '4');
+        dot.setAttribute('fill', 'url(#dotGrad)');
+        dot.setAttribute('stroke', '#fff');
+        dot.setAttribute('stroke-width', '1.2');
+
+        // Dashed connector line (x1/y1 = dot at origin; x2/y2 set in sync)
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.id = 'news-line-' + time;
+        line.setAttribute('x1', '0');
+        line.setAttribute('y1', '0');
+        line.setAttribute('stroke', 'rgba(162,155,254,0.6)');
+        line.setAttribute('stroke-width', '1');
+        line.setAttribute('stroke-dasharray', '3 3');
+
+        // HTML label via foreignObject (absolute pos set in sync)
+        const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+        fo.id = 'news-fo-' + time;
+        fo.setAttribute('width', '280');
+        fo.setAttribute('height', '100');
+        fo.setAttribute('overflow', 'visible');
+
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'nml-label';
+        labelDiv.innerHTML = `
+            <div class="nml-meta">${new Date(time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${escapeHtml(firstNews.source || 'News')}</div>
+            <div class="nml-title">${escapeHtml(count > 1 ? '(' + count + ') ' + firstNews.title : firstNews.title)}</div>
+        `;
+        labelDiv.onclick = () => openModal(firstNews);
+        labelDiv.style.cursor = 'pointer';
+
+        fo.appendChild(labelDiv);
+
+        g.appendChild(ring);
+        g.appendChild(dot);
+        g.appendChild(line);
+        g.appendChild(fo);
+        svg.appendChild(g);
+    }
+
+    // ---- Floating hover tooltip ----
+    const tooltip = document.createElement('div');
+    tooltip.id = 'newsHoverTooltip';
+    tooltip.className = 'news-hover-tooltip';
+    tooltip.style.display = 'none';
+    container.appendChild(tooltip);
+
+    // Subscribe to chart movements to reposition dots
+    lwChart.timeScale().subscribeVisibleTimeRangeChange(syncNewsOverlay);
+    lwChart.timeScale().subscribeSizeChange(syncNewsOverlay);
+
+    // Subscribe to crosshair movement to show/hide detailed marker
+    lwChart.subscribeCrosshairMove(function (param) {
+        // Clear previous active state
+        if (window._activeNewsGId) {
+            const prev = document.getElementById(window._activeNewsGId);
+            if (prev) prev.classList.remove('is-active');
+            window._activeNewsGId = null;
+        }
+
+        if (!param || !param.time || !window._newsByTime) return;
+
+        const newsAtTime = window._newsByTime[param.time];
+        if (!newsAtTime || !newsAtTime.length) return;
+
+        // Show this one
+        const gId = 'news-g-' + param.time;
+        const g = document.getElementById(gId);
+        if (g) {
+            g.classList.add('is-active');
+            window._activeNewsGId = gId;
+        }
+    });
+
+    // Clear native markers
+    lwCandleSeries.setMarkers([]);
+    // Reset top margin
+    lwChart.applyOptions({ layout: { topMarginRatio: 0 } });
+
+    syncNewsOverlay();
+    displayNewsPanel(newsMarkers);
+}
+
+// ---- Sync dot + dashed line + label with chart viewport ----
+function syncNewsOverlay() {
+    if (!lwChart || !lwCandleSeries || !window._newsByTime) return;
+
+    const container = document.getElementById('newsOverlayContainer');
+    if (!container) return;
+
+    const containerW = container.clientWidth;
+    const containerH = container.clientHeight;
+
+    // Sort times so we can detect closeness for staggering
+    const times = Object.keys(window._newsByTime).map(Number).sort((a, b) => a - b);
+
+    // Track last X per row to handle horizontal collision (simple left-to-right sweep)
+    // We use 2 vertical zones: above (even index) and below (odd index)
+    const LABEL_W = 280;   // news label width
+    const LABEL_H = 80;    // news label height
+    const LINE_LEN = 110;   // base length of dashed line
+    const STEP = LABEL_H + 12; // extra offset per stagger level
+
+    // rightEdge[zone] = last X + labelW placed in that zone
+    const rightEdge = {}; // { 'above_0': xRight, 'below_0': xRight, 'above_1': xRight, ... }
+
+    times.forEach((time, idx) => {
+        const g = document.getElementById('news-g-' + time);
+        const line = document.getElementById('news-line-' + time);
+        const fo = document.getElementById('news-fo-' + time);
+        if (!g || !line || !fo) return;
+
+        const xCoord = lwChart.timeScale().timeToCoordinate(time);
+        if (xCoord === null || xCoord < 0 || xCoord > containerW) {
+            g.style.display = 'none';
+            return;
+        }
+
+        // Find candle HIGH for anchor Y
+        let dotY = 0; // relative to group origin; group is placed at candle high
+        let anchorY = containerH * 0.45;
+        if (window.chartCandleData) {
+            for (let i = 0; i < window.chartCandleData.length; i++) {
+                const c = window.chartCandleData[i];
+                if (c.time >= time) {
+                    const yp = lwCandleSeries.priceToCoordinate(c.high);
+                    if (yp !== null && !isNaN(yp)) anchorY = yp;
+                    break;
+                }
+            }
+        }
+
+        // Place group at the candle's high coordinate
+        g.setAttribute('transform', `translate(${xCoord}, ${anchorY})`);
+        g.style.display = '';
+
+        // Decide above or below (alternate by index)
+        const isAbove = (idx % 2 === 0);
+        const direction = isAbove ? -1 : 1;
+
+        // Find stagger level: scan levels until we find one without collision
+        let level = 0;
+        const side = isAbove ? 'above' : 'below';
+        while (true) {
+            const key = `${side}_${level}`;
+            const lastRight = rightEdge[key] || -Infinity;
+            if (xCoord > lastRight - 10) {
+                // Fits in this level
+                rightEdge[key] = xCoord + LABEL_W;
+                break;
+            }
+            level++;
+            if (level > 8) { level = 0; break; } // safety cap
+        }
+
+        // Line end Y (relative to group origin which is at candle high)
+        let totalLen = LINE_LEN + level * STEP;
+
+        // Smart Boundary Handling: Shorten line if it would go out of chart
+        if (isAbove) {
+            const proposedTop = anchorY - totalLen - LABEL_H;
+            if (proposedTop < 10) {
+                totalLen = Math.max(25, anchorY - LABEL_H - 10);
+            }
+        } else {
+            const proposedBottom = anchorY + totalLen + LABEL_H;
+            if (proposedBottom > containerH - 15) {
+                totalLen = Math.max(25, containerH - anchorY - LABEL_H - 15);
+            }
+        }
+
+        const lineEndY = direction * totalLen; // negative = up, positive = down
+
+        // Update line
+        line.setAttribute('x1', '0');
+        line.setAttribute('y1', '0');
+        line.setAttribute('x2', '0');
+        line.setAttribute('y2', lineEndY);
+
+        // Position foreignObject
+        //   X: center label at 0 (candle x), flip if near right edge
+        let foX = -LABEL_W / 2;
+        if (xCoord + LABEL_W / 2 > containerW - 4) foX = -LABEL_W;
+        if (xCoord - LABEL_W / 2 < 4) foX = 0;
+
+        //   Y: label top = lineEndY - LABEL_H (if above) or lineEndY (if below)
+        const foY = isAbove ? lineEndY - LABEL_H : lineEndY;
+
+        fo.setAttribute('x', foX);
+        fo.setAttribute('y', foY);
+        fo.setAttribute('width', LABEL_W);
+        fo.setAttribute('height', LABEL_H);
+    });
+}
+
+
+// ---- Display news timeline panel ----
+function displayNewsPanel(newsMarkers) {
+    console.log('[NEWS PANEL] Creating news panel with', newsMarkers.length, 'items');
+
+    // Find or create panel container
+    let panel = document.getElementById('chartNewsPanel');
+    if (!panel) {
+        const container = document.getElementById('lwChartContainer').parentElement;
+        panel = document.createElement('div');
+        panel.id = 'chartNewsPanel';
+        panel.style.cssText = `
+            margin-top: 0;
+            background: var(--bg-card, rgba(18, 18, 28, 0.75));
+            border: 1px solid rgba(108, 99, 255, 0.2);
+            border-top: none;
+            border-radius: 0 0 12px 12px;
+            padding: 16px;
+            max-height: 280px;
+            overflow-y: auto;
+        `;
+        container.appendChild(panel);
+    }
+
+    // Sort by published time descending
+    const sorted = [...newsMarkers].sort((a, b) => new Date(b.published) - new Date(a.published));
+
+    let html = `
+        <div style="font-size: 0.85rem; font-weight: 700; color: #6c63ff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+            📰 News Feed (${sorted.length} items)
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+    `;
+
+    for (const news of sorted) {
+        const timeStr = new Date(news.published).toLocaleString('en-US', {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
+        });
+        const pairsStr = Array.isArray(news.affected_stocks)
+            ? news.affected_stocks.join(', ')
+            : 'N/A';
+
+        html += `
+            <div style="
+                background: rgba(108, 99, 255, 0.08);
+                border: 1px solid rgba(108, 99, 255, 0.2);
+                border-radius: 8px;
+                padding: 10px 12px;
+                cursor: pointer;
+                transition: all 0.2s ease;
+            " onmouseover="this.style.background='rgba(108, 99, 255, 0.15)'; this.style.borderColor='rgba(108, 99, 255, 0.4)'"
+               onmouseout="this.style.background='rgba(108, 99, 255, 0.08)'; this.style.borderColor='rgba(108, 99, 255, 0.2)'">
+                <div style="font-size: 0.78rem; font-weight: 700; color: #e0e0e0; margin-bottom: 4px; line-height: 1.3;">
+                    ${escapeHtml(news.title)}
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 0.7rem; color: #888;">${timeStr}</span>
+                    <span style="
+                        font-size: 0.65rem;
+                        background: #6c63ff;
+                        color: #fff;
+                        padding: 2px 8px;
+                        border-radius: 4px;
+                        font-weight: 600;
+                    ">${escapeHtml(pairsStr)}</span>
+                </div>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    panel.innerHTML = html;
+}
+
+
+async function fetchCandleData(symbol) {
+    const container = document.getElementById('lwChartContainer');
+    const loadingMsg = document.getElementById('chartLoadingMsg');
+
+    try {
+        const url = `/api/nse/candles?symbol=${encodeURIComponent(symbol)}&limit=500`;
+        const res = await fetch(url);
+        const json = await res.json();
+
+        if (json.status !== 'success' || !json.data || json.data.length === 0) {
+            if (loadingMsg) {
+                loadingMsg.style.display = 'block';
+                loadingMsg.innerHTML = `
+                    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:40px;">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(108,99,255,0.4)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                        <div style="color:#f59e0b;font-weight:600;font-size:0.92rem;">No data for <strong style="color:#f0f0f0;">${symbol.split(':')[1] || symbol}</strong></div>
+                        <div style="color:#888;font-size:0.8rem;text-align:center;max-width:280px;">The pipeline is still collecting candles for this pair. Try again in a few minutes or select a major pair like TCS.</div>
+                    </div>`;
+            }
+            if (container) container.style.display = 'none';
+            return null;
+        }
+
+        // Data comes newest-first from API — reverse to oldest-first
+        const raw = json.data.slice().reverse();
+
+        // Parse & deduplicate
+        const seenTimes = new Set();
+        const candles = [];
+        for (const c of raw) {
+            const t = parseToUnixSec(c.time);
+            if (seenTimes.has(t)) continue;
+            seenTimes.add(t);
+            candles.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
+        }
+        candles.sort((a, b) => a.time - b.time);
+        return candles;
+
+    } catch (err) {
+        if (loadingMsg) {
+            loadingMsg.style.display = 'block';
+            loadingMsg.innerHTML = `<div style="color:#ff4757;">❌ Network error: ${escapeHtml(err.message)}</div>`;
+        }
+        if (container) container.style.display = 'none';
+        return null;
+    }
+}
+
+function setChartLoading(symbol) {
+    const loadingMsg = document.getElementById('chartLoadingMsg');
+    const container = document.getElementById('lwChartContainer');
+    if (loadingMsg) {
+        loadingMsg.style.display = 'block';
+        loadingMsg.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:center;gap:10px;padding:40px;color:#9ca3af;">
+                <div style="width:20px;height:20px;border:2px solid rgba(108,99,255,0.3);border-top-color:#6c63ff;border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;"></div>
+                Loading <strong style="color:#f0f0f0;">${symbol.split(':')[1] || symbol}</strong>…
+            </div>`;
+    }
+    if (container) container.style.display = 'none';
+}
+
+// ---- Render chart with LightweightCharts ----
+function renderLWChart(candleData) {
+    const container = document.getElementById('lwChartContainer');
+    const loadingMsg = document.getElementById('chartLoadingMsg');
+    if (!container) return;
+
+    // Destroy previous chart instance
+    if (lwChart) {
+        try { lwChart.remove(); } catch (_) { }
+        lwChart = null;
+        lwCandleSeries = null;
+    }
+
+    container.style.display = 'block';
+    if (loadingMsg) loadingMsg.style.display = 'none';
+
+    // Ensure container has measurable size
+    const w = container.clientWidth || 900;
+    const h = 460;
+
+    lwChart = LightweightCharts.createChart(container, {
+        width: w,
+        height: h,
+        layout: {
+            background: { type: LightweightCharts.ColorType.Solid, color: '#0b0f19' },
+            textColor: '#7d8490',
+            fontFamily: "'Inter', -apple-system, sans-serif",
+            fontSize: 11,
+        },
+        grid: {
+            vertLines: { color: 'rgba(255,255,255,0.035)', style: LightweightCharts.LineStyle.Dashed },
+            horzLines: { color: 'rgba(255,255,255,0.035)', style: LightweightCharts.LineStyle.Dashed },
+        },
+        crosshair: {
+            mode: LightweightCharts.CrosshairMode.Normal,
+            vertLine: {
+                color: 'rgba(108,99,255,0.6)',
+                width: 1,
+                style: LightweightCharts.LineStyle.Dashed,
+                labelBackgroundColor: '#6c63ff',
+            },
+            horzLine: {
+                color: 'rgba(108,99,255,0.6)',
+                width: 1,
+                style: LightweightCharts.LineStyle.Dashed,
+                labelBackgroundColor: '#6c63ff',
+            },
+        },
+        rightPriceScale: {
+            borderColor: 'rgba(255,255,255,0.06)',
+            textColor: '#7d8490',
+            scaleMargins: { top: 0.08, bottom: 0.08 },
+        },
+        timeScale: {
+            borderColor: 'rgba(255,255,255,0.06)',
+            textColor: '#7d8490',
+            timeVisible: true,
+            secondsVisible: false,
+            rightOffset: 8,
+            barSpacing: 10,
+            tickMarkFormatter: (time, tickMarkType, locale) => {
+                return istTickFormatter.format(new Date(time * 1000));
+            },
+        },
+        localization: {
+            timeFormatter: (time) => istDateFormatter.format(new Date(time * 1000)),
+        },
+        handleScroll: { mouseWheel: true, pressedMouseMove: true },
+        handleScale: { mouseWheel: true, pinch: true },
+    });
+
+    // Handle clicks on news markers
+    lwChart.subscribeClick(param => {
+        if (!param.time || !chartNewsByTime[param.time]) return;
+
+        const newsItems = chartNewsByTime[param.time];
+        if (newsItems.length === 1) {
+            openModal(newsItems[0]);
+        } else {
+            // Simplified: open the first one if multiple exist at the same bucket
+            openModal(newsItems[0]);
+        }
+    });
+
+    // Candlestick series (forex style: green up, red down)
+    lwCandleSeries = lwChart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderUpColor: '#26a69a',
+        borderDownColor: '#ef5350',
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+        priceFormat: {
+            type: 'price',
+            precision: 5,
+            minMove: 0.00001,
+        },
+    });
+
+    lwCandleSeries.setData(candleData);
+    lwChart.timeScale().fitContent();
+
+    // Live crosshair tooltip
+    attachCrosshairTooltip();
+
+    // Create news marker tooltip element
+    let newsTooltip = document.getElementById('newsMarkerTooltip');
+    if (!newsTooltip) {
+        newsTooltip = document.createElement('div');
+        newsTooltip.id = 'newsMarkerTooltip';
+        newsTooltip.style.cssText = `
+            position: absolute;
+            top: 60px;
+            right: 12px;
+            z-index: 11;
+            background: rgba(11, 15, 25, 0.95);
+            border: 1px solid rgba(108, 99, 255, 0.4);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'Inter', sans-serif;
+            display: none;
+            max-width: 340px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(8px);
+            overflow-y: auto;
+            max-height: 180px;
+        `;
+        container.style.position = 'relative';
+        container.appendChild(newsTooltip);
+    }
+
+    // Responsive resize observer
+    if (window._chartObs) window._chartObs.disconnect();
+    window._chartObs = new ResizeObserver(() => {
+        if (lwChart && container.clientWidth > 0) {
+            lwChart.applyOptions({ width: container.clientWidth });
+        }
+    });
+    window._chartObs.observe(container);
+}
+
+// ---- Crosshair OHLC Tooltip ----
+function attachCrosshairTooltip() {
+    // Remove old tooltip if present
+    const old = document.getElementById('chartCrosshairTooltip');
+    if (old) old.remove();
+
+    const tooltip = document.createElement('div');
+    tooltip.id = 'chartCrosshairTooltip';
+    tooltip.style.cssText = `
+        position:absolute; top:12px; left:12px; z-index:10;
+        background:rgba(11,15,25,0.92); border:1px solid rgba(108,99,255,0.35);
+        border-radius:8px; padding:8px 12px; font-size:0.78rem; font-family:'Inter',sans-serif;
+        pointer-events:none; display:none; backdrop-filter:blur(4px);
+        box-shadow:0 4px 20px rgba(0,0,0,0.5);
+    `;
+    const container = document.getElementById('lwChartContainer');
+    container.style.position = 'relative';
+    container.appendChild(tooltip);
+
+    lwChart.subscribeCrosshairMove(param => {
+        if (!param.time || !param.seriesData || !param.seriesData.size) {
+            tooltip.style.display = 'none';
+            return;
+        }
+        const bar = param.seriesData.get(lwCandleSeries);
+        if (!bar) { tooltip.style.display = 'none'; return; }
+
+        const timeStr = istDateFormatter.format(new Date(param.time * 1000)) + ' IST';
+
+        const isUp = bar.close >= bar.open;
+        const col = isUp ? '#26a69a' : '#ef5350';
+        const chg = ((bar.close - bar.open) / bar.open * 100).toFixed(3);
+        const sign = isUp ? '+' : '';
+
+        tooltip.style.display = 'block';
+        tooltip.innerHTML = `
+            <div style="color:#9ca3af;font-size:0.7rem;margin-bottom:4px;">${timeStr} · 3m</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 16px;font-size:0.78rem;">
+                <span style="color:#9ca3af;">O</span><span style="color:#e0e0e0;font-weight:600;">${bar.open.toFixed(5)}</span>
+                <span style="color:#9ca3af;">H</span><span style="color:#26a69a;font-weight:600;">${bar.high.toFixed(5)}</span>
+                <span style="color:#9ca3af;">L</span><span style="color:#ef5350;font-weight:600;">${bar.low.toFixed(5)}</span>
+                <span style="color:#9ca3af;">C</span><span style="color:${col};font-weight:700;">${bar.close.toFixed(5)}</span>
+                <span style="color:#9ca3af;">Chg</span><span style="color:${col};font-weight:600;">${sign}${chg}%</span>
+            </div>
+        `;
+    });
+}
+
+// ---- Update symbol info row ----
+function updateChartStats(symbol, candles) {
+    if (!candles || !candles.length) return;
+    const last = candles[candles.length - 1];
+    const first = candles[0];
+
+    const symLabel = document.getElementById('chartSymbolLabel');
+    const priceEl = document.getElementById('chartLastPrice');
+    const chgEl = document.getElementById('chartPriceChange');
+
+    if (symLabel) symLabel.textContent = symbol.split(':')[1] || symbol;
+
+    const price = last.close;
+    const priceStr = price < 10 ? price.toFixed(5) : price >= 1000 ? price.toFixed(2) : price.toFixed(4);
+    if (priceEl) priceEl.textContent = priceStr;
+
+    if (chgEl && first) {
+        const chg = ((last.close - first.open) / first.open * 100).toFixed(3);
+        const pos = parseFloat(chg) >= 0;
+        chgEl.textContent = `${pos ? '+' : ''}${chg}%`;
+        chgEl.style.cssText = `font-size:0.78rem;font-weight:700;padding:3px 8px;border-radius:5px;
+            color:${pos ? '#26a69a' : '#ef5350'};
+            background:${pos ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.12)'};`;
+    }
+}
+
+// Inject animation keyframes once
+(function () {
+    if (document.getElementById('chartStyleTag')) return;
+    const style = document.createElement('style');
+    style.id = 'chartStyleTag';
+    style.textContent = `
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes livePulse {
+            0%, 100% { opacity:1; transform:scale(1); }
+            50% { opacity:0.4; transform:scale(0.8); }
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+
+
+
+
+// Inject CSS keyframes for chart spinner if not already present
+(function () {
+    if (document.getElementById('chartStyleTag')) return;
+    const style = document.createElement('style');
+    style.id = 'chartStyleTag';
+    style.textContent = `
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.85); }
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+
+
+
+// ---- Market Status Check ----
+let dynamicHolidays = null;
+
+async function fetchHolidays() {
+    try {
+        const res = await fetch('/api/nse/holidays');
+        const json = await res.json();
+        if (json.status === 'success') {
+            dynamicHolidays = json.data;
+        }
+    } catch (e) {
+        console.error('Failed to fetch holidays:', e);
+    }
+}
+
+function updateMarketStatus() {
+    const badge = document.getElementById('chartLiveBadge');
+    if (!badge) return;
+
+    // Use dynamically fetched holidays if available, else a minimal fallback list
+    const holidays = dynamicHolidays || {
+        "2026-03-31": "Shri Mahavir Jayanti"
+    };
+
+    // Get current time in IST
+    const now = new Date();
+    const istTimeString = now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+    const istTime = new Date(istTimeString);
+    
+    const year = istTime.getFullYear();
+    const month = String(istTime.getMonth() + 1).padStart(2, '0');
+    const date = String(istTime.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${date}`;
+    
+    const day = istTime.getDay(); // 0 is Sunday, 6 is Saturday
+    const hours = istTime.getHours();
+    const minutes = istTime.getMinutes();
+    
+    // Convert to minutes since midnight for easy comparison
+    const timeInMins = hours * 60 + minutes;
+    const openInMins = 9 * 60 + 15; // 9:15 AM
+    const closeInMins = 15 * 60 + 32; // 3:32 PM
+    
+    const isWeekend = (day === 0 || day === 6);
+    const isMarketHours = (timeInMins >= openInMins && timeInMins <= closeInMins);
+    const holidayName = holidays[dateStr];
+    
+    if (holidayName) {
+        badge.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:#ef5350;"></span>CLOSED (${holidayName})`;
+        badge.style.color = '#ef5350';
+        badge.style.background = 'rgba(239,83,80,0.12)';
+        badge.style.borderColor = 'rgba(239,83,80,0.3)';
+    } else if (isWeekend || !isMarketHours) {
+        badge.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:#ef5350;"></span>CLOSED`;
+        badge.style.color = '#ef5350';
+        badge.style.background = 'rgba(239,83,80,0.12)';
+        badge.style.borderColor = 'rgba(239,83,80,0.3)';
+    } else {
+        badge.innerHTML = `<span style="width:7px;height:7px;border-radius:50%;background:#00d464;animation:livePulse 1.4s infinite;"></span>LIVE`;
+        badge.style.color = '#00d464';
+        badge.style.background = 'rgba(0,212,100,0.12)';
+        badge.style.borderColor = 'rgba(0,212,100,0.3)';
+    }
+}
+
+// Call on load and check every minute
+setInterval(updateMarketStatus, 60000);
+setTimeout(updateMarketStatus, 500);

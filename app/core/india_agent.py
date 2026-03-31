@@ -86,7 +86,7 @@ async def analyze_indian_news(title: str, description: str = "") -> Optional[Dic
             "category": str(data.get("category", "routine_market_update")),
             "relevance": str(data.get("relevance", "Noisy")),
             "sector_impact": str(data.get("sector_impact", "None")),
-            "affected_sectors": list(data.get("affected_sectors", [])),
+            "affected_sectors": data.get("affected_sectors", []) if isinstance(data.get("affected_sectors"), list) else [],
             "reason": str(data.get("reason", "No specific reason provided."))
         }
 

@@ -3,6 +3,7 @@ import os
 import asyncio
 import logging
 import hashlib
+import time
 from datetime import datetime, timezone
 import feedparser
 import httpx
@@ -128,6 +129,10 @@ async def fetch_feed_task(client: httpx.AsyncClient, source: str, url: str) -> L
             else:
                 published = datetime.now(timezone.utc)
 
+            # 4. Skip if the article is already older than 24 hours
+            if (datetime.now(timezone.utc) - published).total_seconds() > 24 * 3600:
+                continue
+
             image_url = None
             if 'media_content' in entry and len(entry.media_content) > 0:
                 image_url = entry.media_content[0].get('url')
@@ -204,7 +209,7 @@ async def run_scraper_cycle():
     # Track stats per source
     source_stats = {s: {"total": 0, "new": 0, "dup": 0} for s in FEEDS.keys()}
     
-    async with httpx.AsyncClient(headers=HEADERS, verify=False) as client:
+    async with httpx.AsyncClient(headers=HEADERS) as client:
         tasks = []
         for source, urls in FEEDS.items():
             for url in urls:
@@ -239,18 +244,42 @@ async def run_scraper_cycle():
     for src, stats in source_stats.items():
         if stats["total"] > 0:
             logger.info(f"[{src}] New: {stats['new']}, Duplicate: {stats['dup']}, Total: {stats['total']}")
-
     # Final Summary
     total_new = sum(s["new"] for s in source_stats.values())
     total_dup = sum(s["dup"] for s in source_stats.values())
     total_all = sum(s["total"] for s in source_stats.values())
     duration = time.time() - start_time
-    logger.info(f"===== Cycle Complete in {duration:.2f}s: {total_new} New, {total_dup} Duplicates, {total_all} Total ArticlesProcessed =====")
+    logger.info(f"===== Cycle Complete in {duration:.2f}s: {total_new} New, {total_dup} Duplicates, {total_all} Total Articles Processed =====")
+
+async def cleanup_old_news():
+    """Deletes articles older than 24 hours from the database."""
+    try:
+        await asyncio.to_thread(
+            execute_query,
+            "DELETE FROM indian_news WHERE published < (NOW() - INTERVAL '24 hours')"
+        )
+        logger.info("Background cleanup: Deleted Indian news articles older than 24h.")
+    except Exception as e:
+        logger.error(f"Cleanup Error: {e}")
 
 async def main():
     logger.info("Starting Async Indian Market Scraper (20s interval)...")
+    
+    # Run cleanup immediately on startup
+    await cleanup_old_news()
+    last_cleanup_time = time.time()
+    
+    CLEANUP_INTERVAL = 30 * 60  # 30 minutes in seconds
+
     while True:
         try:
+            current_time = time.time()
+            
+            # Run cleanup every 30 minutes
+            if current_time - last_cleanup_time >= CLEANUP_INTERVAL:
+                await cleanup_old_news()
+                last_cleanup_time = current_time
+
             await run_scraper_cycle()
         except KeyboardInterrupt:
             break
@@ -259,7 +288,6 @@ async def main():
         await asyncio.sleep(20)
 
 if __name__ == "__main__":
-    import time
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
