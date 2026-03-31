@@ -989,6 +989,33 @@ function renderIndianCompactModal(article, analysis) {
 }
 
 
+/**
+ * Switch between tabs in the analysis panel.
+ * @param {HTMLElement} btn - The button element that was clicked.
+ * @param {string} tabId - The ID of the tab panel to display.
+ */
+function switchTab(btn, tabId) {
+    // 1. Get the container (analysis-panel)
+    const container = btn.closest('.analysis-panel');
+    if (!container) return;
+
+    // 2. Update button states
+    const tabs = container.querySelectorAll('.analysis-tab');
+    tabs.forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+
+    // 3. Update panel visibility
+    const panels = container.querySelectorAll('.analysis-tab-panel');
+    panels.forEach(p => p.classList.remove('active'));
+
+    const activePanel = container.querySelector(`#${tabId}`);
+    if (activePanel) {
+        activePanel.classList.add('active');
+    }
+}
+
+
+
 function getAnalysisData(article) {
     if (!article || !article.analysis_data) return null;
     let data = article.analysis_data;

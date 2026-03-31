@@ -29,6 +29,12 @@ MANDATORY_EXOTICS = [
     "USDMXN", "USDBRL", "USDKRW", "USDIDR"
 ]
 
+# Standard major/minor pairs to ensure coverage if API discovery fails
+DEFAULT_MAJORS = [
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD",
+    "EURGBP", "EURJPY", "GBPJPY", "EURCHF", "AUDJPY", "EURCAD", "EURAUD"
+]
+
 # =========================
 # DATABASE SETUP
 # =========================
@@ -42,6 +48,28 @@ def init_db():
 # =========================
 def sync_pairs():
     print("🔄 Syncing forex pairs from multiple sources...")
+    
+    if not FINNHUB_API_KEY:
+        print("❌ ERROR: FINNHUB_API_KEY not found in environment variables.")
+        print("⚠️ Falling back to default major and mandatory exotic pairs.")
+        
+        # Build default list from hardcoded majors and exotics
+        # We assume FX_IDC for these as it's the most generic provider
+        fallback_pairs = [f"FX_IDC:{p}" for p in (DEFAULT_MAJORS + MANDATORY_EXOTICS)]
+        
+        # Save them to DB so they persist
+        try:
+            with psycopg2.connect(**DB_CONFIG) as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    for symbol in fallback_pairs:
+                        cur.execute("INSERT INTO forex_pairs (symbol) VALUES (%s) ON CONFLICT DO NOTHING", (symbol,))
+            print(f"✅ Synced {len(fallback_pairs)} default/mandatory pairs to database.")
+        except Exception as db_err:
+            print(f"⚠️ Failed to save default pairs to DB: {db_err}")
+            
+        return fallback_pairs
+
     try:
         exchanges = ["oanda", "fxcm", "forex.com"]
         canonical_to_provider = {} # pair -> preferred_full_symbol
@@ -284,8 +312,16 @@ def main():
     
     # Initial Sync
     pairs = sync_pairs()
+    
+    # If sync failed (API error or DB error), try to get from DB
     if not pairs:
+        print("⚠️ Sync returned no pairs, attempting to load from database...")
         pairs = get_stored_pairs()
+    
+    # Final safety fallback: If still no pairs, use hardcoded defaults
+    if not pairs:
+        print("⚠️ Database empty and sync failed. Using hardcoded fallback lists.")
+        pairs = [f"FX_IDC:{p}" for p in (DEFAULT_MAJORS + MANDATORY_EXOTICS)]
     
     if not pairs:
         print("⚠️ No pairs found. Syncing might have failed.")
