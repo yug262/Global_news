@@ -8,6 +8,7 @@ import hashlib
 import re
 import threading
 import asyncio
+
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dateutil import parser as date_parser
@@ -20,7 +21,7 @@ from urllib.parse import urljoin
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from app.core.db import execute_query, fetch_one, execute_many, fetch_all
 from app.core.agent import classify_news_relevance
-
+from app.core.event_engine import resolve_event
 # ══════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════
@@ -731,14 +732,22 @@ def fetch_and_store_single(fn):
         try:
             title_hash = get_hash(article['title'])
             affected_pairs = c_res.get("affected_forex_pairs") or []
+            
+            # Resolve deterministic event
+            event_data = resolve_event(article['title'], actual_published)
+            ev_id = event_data['event_id']
+            ev_title = event_data['event_title']
+            
             execute_query(
                 """INSERT INTO news (title, link, title_hash, published, source, description, image_url,
-                                    news_relevance, news_category, news_reason, affected_forex_pairs)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    news_relevance, news_category, news_reason, affected_forex_pairs,
+                                    event_id, event_title)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (title_hash) DO NOTHING""",
                 (article['title'], article['link'], title_hash, actual_published,
                  article['source'], description, image_url,
-                 relevance, category, reason, json.dumps(affected_pairs))
+                 relevance, category, reason, json.dumps(affected_pairs),
+                 ev_id, ev_title)
             )
             new_count += 1
             

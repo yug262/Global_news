@@ -10,6 +10,7 @@ const CONNECTION_FAIL_THRESHOLD = 2;
 
 let currentSource = 'all';
 let searchQuery = '';
+let currentEventId = null;
 let newsData = [];
 let sourceFilters = [];
 const analyzingArticles = new Set();
@@ -1560,6 +1561,9 @@ async function fetchNews() {
         if (showOnlyAnalyzed) {
             url += `&analyzed_only=true`;
         }
+        if (currentEventId) {
+            url += `&event_id=${encodeURIComponent(currentEventId)}`;
+        }
 
         const res = await fetch(url);
         const json = await res.json();
@@ -1695,7 +1699,7 @@ async function init() {
     if (relevanceFilter) {
         relevanceFilter.value = 'all';
     }
-    await Promise.all([fetchSources(), fetchNews(), fetchStats()]);
+    await Promise.all([fetchSources(), fetchNews(), fetchStats(), fetchEvents()]);
 }
 
 init();
@@ -1705,7 +1709,77 @@ setInterval(() => {
     fetchSources();
     fetchNews();
     fetchStats();
+    fetchEvents();
 }, REFRESH_INTERVAL);
+
+// ---- Fetch Events ----
+async function fetchEvents() {
+    try {
+        const res = await fetch(`${API_BASE}/api/events/global`);
+        const json = await res.json();
+        if (json.status === 'success') {
+            renderEvents(json.data);
+        }
+    } catch (e) {
+        console.error("Failed to fetch events", e);
+    }
+}
+
+function renderEvents(events) {
+    const section = document.getElementById('eventsSection');
+    const container = document.getElementById('eventsContainer');
+    
+    if (!events || events.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    let html = '';
+    events.forEach(ev => {
+        const timeAgoStr = timeAgo(ev.latest_update);
+        const isActive = currentEventId === ev.event_id;
+        html += `
+            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" style="min-width: 260px; background: var(--bg-card); border: 1px solid ${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}; border-radius: 12px; padding: 14px; cursor: pointer; transition: all 0.2s; box-shadow: ${isActive ? '0 4px 15px rgba(108,99,255,0.15)' : 'none'};" onmouseover="this.style.borderColor='rgba(108,99,255,0.5)'" onmouseout="this.style.borderColor='${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}'">
+                <div style="font-size: 0.72rem; color: #a89fff; font-weight: 700; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; letter-spacing: 0.5px;">
+                    <span>EVENT TRACKER</span>
+                    <span style="color: var(--text-muted); font-weight: 500;">${timeAgoStr}</span>
+                </div>
+                <h3 style="font-size: 1.05rem; color: var(--text-main); margin: 0 0 12px 0; line-height: 1.35; font-weight: 700;">${escapeHtml(ev.event_title)}</h3>
+                <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; font-weight: 500;">
+                    <span style="display:inline-block; width:6px; height:6px; background:#00c8b4; border-radius:50%; box-shadow: 0 0 6px #00c8b4;"></span>
+                    ${ev.article_count} perfectly aligned updates
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+window.filterByEvent = function(eventId, eventName) {
+    if (currentEventId === eventId) {
+        clearEventFilter(); // Toggle off if clicked again
+        return;
+    }
+    currentEventId = eventId;
+    document.getElementById('activeEventFilterPill').style.display = 'flex';
+    document.getElementById('activeEventName').textContent = eventName;
+    
+    const header = document.getElementById('allNewsHeader');
+    if (header) header.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    fetchNews();
+    fetchEvents();
+};
+
+window.clearEventFilter = function() {
+    currentEventId = null;
+    document.getElementById('activeEventFilterPill').style.display = 'none';
+    fetchNews();
+    fetchEvents();
+};
+
 
 
 // ============================================
