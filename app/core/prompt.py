@@ -904,6 +904,35 @@ If NO real trigger:
 → STOP
 
 ━━━━━━━━━━━━━━━━━━
+STEP 2.5: ECONOMIC CONSEQUENCE (CRITICAL)
+━━━━━━━━━━━━━━━━━━
+
+After identifying the trigger, determine the FIRST-ORDER economic impact.
+
+You MUST identify what changes:
+
+- Cost (input cost, fuel, raw material)
+- Revenue (orders, demand, pricing power)
+- Margin (cost vs revenue mismatch)
+- Risk (removal of uncertainty or new risk)
+- Demand (increase/decrease in consumption)
+
+DO NOT stop at describing the event.
+
+You must think:
+
+trigger → business impact → market implication
+
+Examples:
+
+- Fuel price ↑ → airline costs ↑ → margins ↓
+- Large order → revenue visibility ↑ → earnings predictability ↑
+- Contract renewal → business continuity secured → risk ↓
+- Commodity ↑ → input cost ↑ → sector margins ↓
+
+If economic consequence is unclear → downgrade relevance by one level
+
+━━━━━━━━━━━━━━━━━━
 STEP 3: FRESHNESS
 ━━━━━━━━━━━━━━━━━━
 
@@ -934,26 +963,22 @@ If NOT fresh:
 STEP 4: MARKET REACTION
 ━━━━━━━━━━━━━━━━━━
 
-Check if market has already reacted to this news.
+Check if market has reacted to this news.
 
-ASSESSMENT:
+CASE A: No/small move (0–2%)
+→ Likely not priced in → no change
 
-CASE A: No/small price move (0-2%)
-→ News likely not priced in
-→ Continue evaluation normally
-
-CASE B: Moderate move (2-5%)
-→ Partial pricing already occurred
-→ Downgrade relevance by ONE level
-→ Continue evaluation
+CASE B: Moderate move (2–5%)
+→ Partially priced → downgrade relevance by ONE level
 
 CASE C: Large move (>5%)
-→ Market may have partially or fully priced in the news
-→ Downgrade relevance
-→ DO NOT automatically classify as Noisy
+→ Initial reaction occurred
+→ DO NOT change direction or reasoning
+→ Only downgrade relevance by ONE level if needed
 
-EXCEPTION:
-If news breaks during market hours and price hasn't moved yet, treat as fresh.
+IMPORTANT:
+Price movement affects TIMING, not ECONOMIC IMPACT.
+Do NOT change reasoning based on price movement.
 
 ━━━━━━━━━━━━━━━━━━
 STEP 5: CATEGORY
@@ -1077,6 +1102,19 @@ CLASSIFICATION PRINCIPLES:
 - No India linkage = Noisy
 - Weak signal → downgrade relevance
 
+DOMINANT SIGNAL RULE:
+
+If both positive and negative signals exist:
+
+- Identify which has stronger economic impact
+- Follow the dominant signal
+- DO NOT average into Neutral
+
+Examples:
+
+- Strong revenue + minor headwinds → follow positive
+- Cost increase + unclear mitigation → follow negative
+
 SPECIFIC OVERRIDES:
 - Stock split / bonus = corporate_event BUT downgrade to Medium/Neutral
 - IPO subscription/GMP/allotment = routine_market_update (NOT corporate_event)
@@ -1104,29 +1142,54 @@ If impact requires multiple steps of transmission:
 → Direct impact can be High Usefulactionability
 → Indirect impact max Medium (usually)actionability
 
-━━━━━━━━━━━━━━━━━━
-REASON CONSTRUCTION
-━━━━━━━━━━━━━━━━━━
+MULTI-SECTOR IMPACT RULE:
 
-The reason field must:
-- Be ONE concise sentence
-- Explain the trigger → effect relationship OR why classified as Noisy
-- Be factual and specific
-- Mention key driver or impact
-- Not repeat the category name
+If same news affects different sectors differently:
 
-GOOD REASON EXAMPLES:
-✓ "RBI rate hike increases lending costs for banks and NBFCs."
-✓ "Large order win boosts revenue visibility for the company."
-✓ "Crude oil surge raises input costs for OMCs and airlines."
-✓ "No India-specific impact from foreign policy announcement."
-✓ "Post-market close explanation of price movement without new trigger."
+→ DO NOT classify as Neutral
+→ Choose dominant impact OR downgrade slightly
 
-BAD REASON EXAMPLES:
-✗ "This is corporate event news."
-✗ "High impact on markets."
-✗ "Important news."
-✗ "Market moving event."
+Example:
+- Gold ↑ → jewelry negative, gold finance positive
+
+Avoid collapsing into Neutral due to complexity
+
+REASON CONSTRUCTION (STRICT):
+
+The reason must explain:
+
+trigger → economic impact → affected business metric
+
+It MUST clearly mention at least one:
+
+- cost change
+- revenue change
+- margin impact
+- demand shift
+- risk change
+
+BAD:
+"increases costs"
+
+GOOD:
+"increases operating costs for airlines, reducing margins"
+
+BAD:
+"signals growth"
+
+GOOD:
+"improves revenue visibility and future earnings certainty"
+
+NEUTRAL USAGE RULE:
+
+Neutral should be used ONLY when:
+- no clear economic impact exists
+- OR information is purely informational
+
+DO NOT use Neutral when:
+- cost impact is clear
+- revenue visibility changes
+- risk is added or removed
 
 ━━━━━━━━━━━━━━━━━━
 FINAL OUTPUT
