@@ -843,6 +843,7 @@ Every decision must balance:
 - clarity of economic impact
 - stock impact clarity
 
+
 ━━━━━━━━━━━━━━━━━━
 STEP 1: INDIA LINKAGE
 ━━━━━━━━━━━━━━━━━━
