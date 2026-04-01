@@ -992,6 +992,30 @@ price_action_noise
 → No real signal: pure price commentary, post-event rationalization, vague statements
 
 ━━━━━━━━━━━━━━━━━━
+MATERIALITY CHECK
+━━━━━━━━━━━━━━━━━━
+
+Check whether the event is large enough to matter.
+
+High materiality:
+- >10% sales growth
+- >15% earnings surprise
+- major policy change
+- large order relative to company size
+- promoter stake increase >1%
+- commodity move >5%
+
+Low materiality:
+- routine management commentary
+- small order wins
+- minor price changes
+- vague future plans
+- symbolic announcements
+
+Low materiality news should not be High Useful.
+
+
+━━━━━━━━━━━━━━━━━━
 STEP 7: RELEVANCE
 ━━━━━━━━━━━━━━━━━━
 
@@ -1035,6 +1059,22 @@ Noisy:
 - No real trigger
 - No India linkage
 
+POSITIVE CORPORATE TRIGGERS:
+The following should usually be classified as Useful or High Useful unless already fully priced in:
+- Strong sales growth
+- Earnings beat
+- Record revenue / profit
+- Promoter buying / stake increase
+- Large order win
+- Capacity expansion
+- Margin improvement
+- New product launch with scale
+- Regulatory approval
+- Strong guidance / outlook
+- Market share gain
+
+These should rarely be Neutral.
+
 DOWNGRADE TRIGGERS:
 Apply these downgrades to initial assessment:
 
@@ -1052,6 +1092,43 @@ STOCK SAFETY RULES:
 - Indices (NIFTY, SENSEX) are NOT stocks
 - If confidence < 70% → return []
 
+━━━━━━━━━━━━━━━━━━
+STEP 8A: IMPACT DIRECTION
+━━━━━━━━━━━━━━━━━━
+
+Determine likely market impact:
+
+positive:
+- earnings beat
+- sales growth
+- promoter buying
+- order win
+- lower input costs
+- lower tax burden
+- capacity expansion
+- strong guidance
+- market share gain
+- debt reduction
+
+negative:
+- earnings miss
+- margin pressure
+- input cost increase
+- tax increase
+- regulatory penalty
+- promoter selling
+- order cancellation
+- weak guidance
+- geopolitical escalation
+- crude spike hurting users
+
+neutral:
+- already expected news
+- weak or speculative news
+- no clear earnings impact
+- mixed sector impact
+- low materiality
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 8: STOCK IMPACT IDENTIFICATION
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1063,6 +1140,33 @@ Stocks:
 • If unclear → []  
 
 Do NOT infer complex indirect chains.
+
+━━━━━━━━━━━━━━━━━━
+STOCK MAPPING RULES
+━━━━━━━━━━━━━━━━━━
+
+Use only NSE-listed symbols.
+
+If company directly mentioned:
+- include exact NSE symbol
+
+If sector news:
+- include 2-5 most directly affected NSE leaders
+- prefer companies with direct revenue exposure
+- avoid indirect or unrelated names
+
+Examples:
+- Fuel price hike → INDIGO, SPICEJET, CONCOR, VRLLOG
+- Gold price rise → TITAN, KALYANKJIL, HINDZINC, VEDL
+- Iranian crude imports → IOC, BPCL, HPCL, RELIANCE, MRPL
+- Auto sales growth → TATAMOTORS, M&M, MARUTI
+
+Do not use company names instead of NSE ticker symbols.
+Use correct NSE format:
+- VRLLOG not VRLOGISTICS
+- KALYANKJIL not KALYAN
+- MCDOWELL-N if needed
+- BAJAJ-AUTO if needed
 
 ━━━━━━━━━━━━━━━━━━
 CRITICAL RULES
@@ -1098,6 +1202,27 @@ GLOBAL NEWS:
 Global news is valid ONLY if clear India transmission exists.
 Otherwise → Noisy with "No linkage to Indian markets"
 
+MACRO TRANSMISSION RULES:
+
+Crude oil up:
+- Positive: ONGC, OIL
+- Negative: INDIGO, SPICEJET, paint, tyre, OMCs
+
+Crude oil down:
+- Positive: airlines, paint, tyres, OMCs
+- Negative: ONGC, OIL
+
+Gold up:
+- Positive: safe haven sentiment, gold financing, bullion
+- Mixed/Negative: TITAN, KALYANKJIL because higher prices can reduce jewellery demand
+
+Silver up:
+- Positive: HINDZINC, VEDL
+
+Geopolitical tension:
+- Positive: defence, oil producers, gold
+- Negative: airlines, logistics, import-heavy sectors
+
 INDIRECT IMPACT:
 If impact requires multiple steps of transmission:
 → Downgrade relevance by one level
@@ -1125,8 +1250,6 @@ GOOD REASON EXAMPLES:
 BAD REASON EXAMPLES:
 ✗ "This is corporate event news."
 ✗ "High impact on markets."
-✗ "Important news."
-✗ "Market moving event."
 
 ━━━━━━━━━━━━━━━━━━
 FINAL OUTPUT
