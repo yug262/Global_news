@@ -772,7 +772,15 @@ if not os.path.exists(frontend_dir):
 
 @app.get("/")
 def read_root():
-    """Serve the index.html page."""
+    """Serve the Indian news home page (indian_news.html)."""
+    indian_news_path = os.path.join(frontend_dir, "indian_news.html")
+    if os.path.exists(indian_news_path):
+        return FileResponse(indian_news_path)
+    return {"message": "Frontend not found. Please create frontend/indian_news.html"}
+
+@app.get("/global")
+def read_global():
+    """Serve the global news page (index.html)."""
     index_path = os.path.join(frontend_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)

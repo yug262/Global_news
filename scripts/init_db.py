@@ -207,6 +207,7 @@ MIGRATE_INDIAN_AGENT_COLUMNS = [
     "ALTER TABLE indian_news ADD COLUMN IF NOT EXISTS affected_entities JSONB;",
     "ALTER TABLE indian_news ADD COLUMN IF NOT EXISTS evidence JSONB;",
     "ALTER TABLE indian_news ADD COLUMN IF NOT EXISTS symbols TEXT[];"
+    "ALTER TABLE indian_news ADD COLUMN IF NOT EXISTS decision_trace JSONB DEFAULT '{}';"
 ]
 
 def create_indian_news_table():

@@ -14,8 +14,8 @@ let newsData = [];
 let sourceFilters = [];
 const analyzingArticles = new Set();
 
+let showOnlyAnalyzed = false;
 let currentRelevance = 'all';
-let currentEventId = null;
 let isFetching = false;
 let consecutiveFailures = 0;
 let searchDebounceTimer = null;
@@ -39,16 +39,6 @@ const connectionBanner = document.getElementById('connectionBanner');
 const toastContainer = document.getElementById('toastContainer');
 const themeToggle = document.getElementById('themeToggle');
 
-// ---- Mobile Menu Elements ----
-const mobileMenuTrigger = document.getElementById('mobileMenuTrigger');
-const mobileDrawer = document.getElementById('mobileDrawer');
-const drawerOverlay = document.getElementById('drawerOverlay');
-const drawerClock = document.getElementById('drawerClock');
-const drawerCount = document.getElementById('drawerCount');
-
-let showOnlyAnalyzed = false;
-let isDrawerOpen = false;
-
 // ---- Theme Toggle ----
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -71,9 +61,7 @@ function updateClock() {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: true, timeZone: 'Asia/Kolkata'
     };
-    const timeStr = now.toLocaleTimeString('en-US', options) + ' IST';
-    clockEl.textContent = timeStr;
-    if (drawerClock) drawerClock.textContent = timeStr;
+    clockEl.textContent = now.toLocaleTimeString('en-US', options) + ' IST';
 }
 
 setInterval(updateClock, 1000);
@@ -1566,17 +1554,12 @@ async function fetchNews() {
         if (showOnlyAnalyzed) {
             url += `&analyzed_only=true`;
         }
-        if (currentEventId) {
-            url += `&event_id=${encodeURIComponent(currentEventId)}`;
-        }
 
         const res = await fetch(url);
         const json = await res.json();
 
         if (json.status === 'success') {
-            if (articleCount) articleCount.textContent = `${json.data.length} articles`;
-            if (drawerCount) drawerCount.textContent = `${json.data.length} articles`;
-
+            newsData = json.data;
             // The backend handles the `analyzed_only` filter, but we filter client-side just in case
             let displayData = [...newsData];
             if (showOnlyAnalyzed) displayData = displayData.filter(a => a.impact_score != null);
@@ -1601,114 +1584,6 @@ async function fetchNews() {
         hideRefreshIndicator();
     }
 }
-
-// ---- Fetch Events ----
-async function fetchEvents() {
-    try {
-        const res = await fetch(`${API_BASE}/api/events/global`);
-        const json = await res.json();
-        if (json.status === 'success') {
-            renderEvents(json.data);
-        }
-    } catch (e) {
-        console.error("Failed to fetch events", e);
-    }
-}
-
-function renderEvents(events) {
-    const section = document.getElementById('eventsSection');
-    const container = document.getElementById('eventsContainer');
-    
-    if (!events || events.length === 0) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    let html = '';
-    events.forEach(ev => {
-        const timeAgoStr = timeAgo(ev.latest_update);
-        const isActive = currentEventId === ev.event_id;
-        
-        // Dynamic "Live" indicator if updated in last 2 hours
-        const lastUpdate = new Date(ev.latest_update).getTime();
-        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
-        const isLive = lastUpdate > twoHoursAgo;
-
-        html += `
-            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" title="Filter by ${escapeHtml(ev.event_title)}">
-                <div class="event-card-header">
-                    <span class="event-label">EVENT TRACKER</span>
-                    <span class="event-time">${timeAgoStr}</span>
-                </div>
-                <h3 class="event-card-title">${escapeHtml(ev.event_title)}</h3>
-                <div class="event-footer">
-                    <div class="event-updates">
-                        <span class="event-pulse" style="display: ${isLive ? 'block' : 'none'}"></span>
-                        <span>${ev.article_count} perfectly aligned updates</span>
-                    </div>
-                </div>
-            </div>
-        `;
-    });
-    container.innerHTML = html;
-
-    // Attach scroll listener for buttons visibility
-    container.addEventListener('scroll', checkScrollButtons, { passive: true });
-    // Initial check
-    setTimeout(checkScrollButtons, 100);
-}
-
-function checkScrollButtons() {
-    const container = document.getElementById('eventsContainer');
-    const leftBtn = document.querySelector('.scroll-btn.left');
-    const rightBtn = document.querySelector('.scroll-btn.right');
-    if (!container || !leftBtn || !rightBtn) return;
-
-    leftBtn.style.display = container.scrollLeft > 20 ? 'flex' : 'none';
-    
-    const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 20;
-    rightBtn.style.display = atEnd ? 'none' : 'flex';
-}
-
-window.filterByEvent = function(eventId, eventName) {
-    if (currentEventId === eventId) {
-        clearEventFilter(); // Toggle off if clicked again
-        return;
-    }
-    currentEventId = eventId;
-    document.getElementById('activeEventFilterPill').style.display = 'flex';
-    document.getElementById('activeEventName').textContent = eventName;
-    
-    // Scroll to top of news grid
-    const newsHeader = document.getElementById('newsHeader') || document.querySelector('.news-grid-header') || newsGrid;
-    if (newsHeader) newsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    
-    fetchNews();
-    fetchEvents();
-};
-
-window.clearEventFilter = function() {
-    currentEventId = null;
-    document.getElementById('activeEventFilterPill').style.display = 'none';
-    fetchNews();
-    fetchEvents();
-};
-
-window.scrollEvents = function(direction) {
-    const container = document.getElementById('eventsContainer');
-    if (!container) return;
-    
-    // Calculate scroll amount based on card width
-    const firstCard = container.querySelector('.event-card');
-    const scrollAmount = firstCard ? firstCard.offsetWidth + 20 : 340;
-    
-    container.scrollBy({
-        left: direction * scrollAmount,
-        behavior: 'smooth'
-    });
-};
 
 // ---- Fetch Footer Stats ----
 async function fetchStats() {
@@ -1797,32 +1672,6 @@ if (relevanceFilter) {
     });
 }
 
-// ---- Mobile Drawer Toggle ----
-function toggleMobileMenu() {
-    isDrawerOpen = !isDrawerOpen;
-    if (isDrawerOpen) {
-        mobileMenuTrigger.classList.add('active');
-        mobileDrawer.classList.add('active');
-        drawerOverlay.classList.add('active');
-        document.body.style.overflow = 'hidden'; // Stop background scroll
-    } else {
-        mobileMenuTrigger.classList.remove('active');
-        mobileDrawer.classList.remove('active');
-        drawerOverlay.classList.remove('active');
-        document.body.style.overflow = '';
-    }
-}
-
-if (mobileMenuTrigger) mobileMenuTrigger.addEventListener('click', toggleMobileMenu);
-if (drawerOverlay) drawerOverlay.addEventListener('click', toggleMobileMenu);
-
-// Close drawer on link click
-document.querySelectorAll('.drawer-link').forEach(link => {
-    link.addEventListener('click', () => {
-        if (isDrawerOpen) toggleMobileMenu();
-    });
-});
-
 if (analyzedToggle) {
     analyzedToggle.addEventListener('click', () => {
         showOnlyAnalyzed = !showOnlyAnalyzed;
@@ -1840,7 +1689,7 @@ async function init() {
     if (relevanceFilter) {
         relevanceFilter.value = 'all';
     }
-    await Promise.all([fetchSources(), fetchNews(), fetchStats(), fetchEvents()]);
+    await Promise.all([fetchSources(), fetchNews(), fetchStats()]);
 }
 
 init();
@@ -1850,7 +1699,6 @@ setInterval(() => {
     fetchSources();
     fetchNews();
     fetchStats();
-    fetchEvents();
 }, REFRESH_INTERVAL);
 
 

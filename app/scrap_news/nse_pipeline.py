@@ -21,6 +21,86 @@ sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '
 from app.core.db import DB_CONFIG
 
 # =========================
+# API KEY ROTATION
+# =========================
+class APIKeyRotator:
+    """Manages API key rotation every 2 hours across 30 keys (only during market hours)."""
+    def __init__(self, api_keys):
+        """
+        Initialize with list of API keys.
+        Args:
+            api_keys: List of 30 API keys
+        """
+        self.api_keys = api_keys if api_keys else []
+        self.current_index = 0
+        self.last_rotation = datetime.now()
+        self.rotation_interval = timedelta(hours=2)
+        self.lock = threading.Lock()
+        self.is_market_open = False  # Only rotate during market hours
+        
+    def set_market_status(self, is_open):
+        """Update market status to control rotation."""
+        with self.lock:
+            self.is_market_open = is_open
+        
+    def get_current_key(self):
+        """Get the current API key and rotate if 2 hours have passed (only during market hours)."""
+        with self.lock:
+            now = datetime.now()
+            # Only rotate if market is open and 2 hours have passed since last rotation
+            if self.is_market_open and now - self.last_rotation >= self.rotation_interval:
+                prev_index = self.current_index
+                self.current_index = (self.current_index + 1) % len(self.api_keys)
+                self.last_rotation = now
+                # Check if we wrapped around from key #30 to key #1
+                if self.current_index == 0 and prev_index > 0:
+                    print(f"🔄 [API ROTATION] Completed full cycle! Restarting from key #1 at {now.strftime('%Y-%m-%d %H:%M:%S')} IST")
+                else:
+                    print(f"🔄 [API ROTATION] Switched to key #{self.current_index + 1} at {now.strftime('%Y-%m-%d %H:%M:%S')} IST")
+            
+            return self.api_keys[self.current_index] if self.api_keys else None
+    
+    def get_all_keys_info(self):
+        """Get information about all keys and current key."""
+        with self.lock:
+            return {
+                "total_keys": len(self.api_keys),
+                "current_key_index": self.current_index,
+                "current_key_number": self.current_index + 1,
+                "last_rotation": self.last_rotation,
+                "next_rotation": self.last_rotation + self.rotation_interval,
+            }
+
+# Initialize API Key Rotator with 30 keys from environment or hardcoded
+def init_api_rotator():
+    """Initialize API key rotator with keys from environment variables or config."""
+    api_keys = []
+    
+    # Try to load from environment variables (API_KEY_1, API_KEY_2, ..., API_KEY_30)
+    for i in range(1, 38):
+        key = os.getenv(f"FINNHUB_API_KEY_{i}", None)
+        if key:
+            api_keys.append(key)
+    
+    # If not enough keys from env, you can set them here or load from a config file
+    if len(api_keys) < 30:
+        print(f"⚠️ Only {len(api_keys)} API keys loaded from environment (need 30)")
+        # Uncomment and add your keys below if needed:
+        # api_keys = [
+        #     "key1", "key2", ..., "key30"
+        # ]
+    
+    if not api_keys:
+        print("⚠️ No API keys configured. API rotation will not work properly.")
+        print("ℹ️ Please set API_KEY_1 through API_KEY_37 environment variables.")
+        api_keys = [f"dummy_key_{i}" for i in range(1, 38)]  # Fallback dummy keys
+    
+    return APIKeyRotator(api_keys)
+
+# Global API rotator instance
+API_ROTATOR = None
+
+# =========================
 # CONFIGURATION
 # =========================
 
@@ -62,6 +142,12 @@ def fetch_nse_holidays():
             "Referer": "https://www.nseindia.com/resources/exchange-trading-holidays",
             "Accept": "*/*"
         }
+        
+        # Add rotating API key to headers if available
+        if API_ROTATOR:
+            api_key = API_ROTATOR.get_current_key()
+            headers["X-API-Key"] = api_key
+            
         session = requests.Session()
         # Visit home page first for cookies
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
@@ -167,6 +253,12 @@ def sync_companies():
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
         }
+        
+        # Add rotating API key to headers if available
+        if API_ROTATOR:
+            api_key = API_ROTATOR.get_current_key()
+            headers["X-API-Key"] = api_key
+            
         res = requests.get(NSE_CSV_URL, headers=headers, timeout=20)
         
         # Sometime NSE requires cookies to be established, so we make a generic request first
@@ -377,11 +469,14 @@ class TVStreamer:
             is_open, reason, sleep_secs = get_market_status()
             if is_open:
                 print(f"🟢 [Stream {self.stream_id}] Market {reason} at {now.strftime('%H:%M:%S')}. Initiating connection...")
+                API_ROTATOR.set_market_status(True)  # Enable API rotation during market hours
                 self.start() # Blocks here until closed/crashed
+                API_ROTATOR.set_market_status(False)  # Disable API rotation when market closes
                 print(f"⚠️ [Stream {self.stream_id}] Disconnected at {datetime.now(ist).strftime('%H:%M:%S')}. Rechecking in 10s...")
                 time.sleep(10)
             else:
                 # Log once and sleep until open
+                API_ROTATOR.set_market_status(False)  # Ensure market status is off
                 target_dt = now + timedelta(seconds=sleep_secs)
                 target_time = target_dt.strftime("%Y-%m-%d %H:%M:%S")
                 print(f"🔴 [Stream {self.stream_id}] Market CLOSED ({reason}).")
@@ -408,6 +503,13 @@ class TVStreamer:
 # MAIN
 # =========================
 def main():
+    global API_ROTATOR
+    
+    # Initialize API Key Rotator
+    API_ROTATOR = init_api_rotator()
+    print(f"✅ API Key Rotator initialized with {len(API_ROTATOR.api_keys)} keys")
+    print(f"🔄 Rotation interval: Every 2 hours")
+    
     check_db()
     
     # Initial Holiday Fetch
@@ -460,6 +562,19 @@ def main():
                 print(f"⚠️ Cleanup Loop Error: {e}")
 
     threading.Thread(target=cleanup_run_loop, daemon=True).start()
+
+    # Start API Key Rotation Monitor Thread (logs status every 30 minutes)
+    def api_rotation_monitor():
+        while True:
+            time.sleep(1800)  # Every 30 minutes
+            info = API_ROTATOR.get_all_keys_info()
+            print(f"\n📊 [API ROTATION STATUS]")
+            print(f"   Total Keys: {info['total_keys']}")
+            print(f"   Current Key: #{info['current_key_number']}")
+            print(f"   Last Rotation: {info['last_rotation'].strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Next Rotation: {info['next_rotation'].strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    threading.Thread(target=api_rotation_monitor, daemon=True).start()
 
     # Start Streaming
     # 2400 symbols is a lot, so we split them into multiple concurrent TVStreamer threads
