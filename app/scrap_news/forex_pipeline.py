@@ -16,6 +16,87 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
 from app.core.db import DB_CONFIG
+
+# =========================
+# API KEY ROTATION
+# =========================
+class APIKeyRotator:
+    """Manages API key rotation every 2 hours across 30 keys (only during market hours)."""
+    def __init__(self, api_keys):
+        """
+        Initialize with list of API keys.
+        Args:
+            api_keys: List of 30 API keys
+        """
+        self.api_keys = api_keys if api_keys else []
+        self.current_index = 0
+        self.last_rotation = datetime.now()
+        self.rotation_interval = timedelta(hours=2)
+        self.lock = threading.Lock()
+        self.is_market_open = False  # Only rotate during market hours
+        
+    def set_market_status(self, is_open):
+        """Update market status to control rotation."""
+        with self.lock:
+            self.is_market_open = is_open
+        
+    def get_current_key(self):
+        """Get the current API key and rotate if 2 hours have passed (only during market hours)."""
+        with self.lock:
+            now = datetime.now()
+            # Only rotate if market is open and 2 hours have passed since last rotation
+            if self.is_market_open and now - self.last_rotation >= self.rotation_interval:
+                prev_index = self.current_index
+                self.current_index = (self.current_index + 1) % len(self.api_keys)
+                self.last_rotation = now
+                # Check if we wrapped around from key #30 to key #1
+                if self.current_index == 0 and prev_index > 0:
+                    print(f"🔄 [API ROTATION] Completed full cycle! Restarting from key #1 at {now.strftime('%Y-%m-%d %H:%M:%S')}")
+                else:
+                    print(f"🔄 [API ROTATION] Switched to key #{self.current_index + 1} at {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            return self.api_keys[self.current_index] if self.api_keys else None
+    
+    def get_all_keys_info(self):
+        """Get information about all keys and current key."""
+        with self.lock:
+            return {
+                "total_keys": len(self.api_keys),
+                "current_key_index": self.current_index,
+                "current_key_number": self.current_index + 1,
+                "last_rotation": self.last_rotation,
+                "next_rotation": self.last_rotation + self.rotation_interval,
+            }
+
+# Initialize API Key Rotator with 30 keys from environment or hardcoded
+def init_api_rotator():
+    """Initialize API key rotator with keys from environment variables or config."""
+    api_keys = []
+    
+    # Try to load from environment variables (API_KEY_1, API_KEY_2, ..., API_KEY_30)
+    for i in range(1, 31):
+        key = os.getenv(f"API_KEY_{i}", None)
+        if key:
+            api_keys.append(key)
+    
+    # If not enough keys from env, you can set them here or load from a config file
+    if len(api_keys) < 30:
+        print(f"⚠️ Only {len(api_keys)} API keys loaded from environment (need 30)")
+        # Uncomment and add your keys below if needed:
+        # api_keys = [
+        #     "key1", "key2", ..., "key30"
+        # ]
+    
+    if not api_keys:
+        print("⚠️ No API keys configured. API rotation will not work properly.")
+        print("ℹ️ Please set API_KEY_1 through API_KEY_30 environment variables.")
+        api_keys = [f"dummy_key_{i}" for i in range(1, 31)]  # Fallback dummy keys
+    
+    return APIKeyRotator(api_keys)
+
+# Global API rotator instance
+API_ROTATOR = None
+
 # =========================
 # CONFIGURATION
 # =========================
@@ -82,7 +163,14 @@ def sync_pairs():
 
         for ex in exchanges:
             url = f"https://finnhub.io/api/v1/forex/symbol?exchange={ex}&token={FINNHUB_API_KEY}"
-            res = requests.get(url, timeout=12)
+            
+            # Add rotating API key to request if available
+            headers = {}
+            if API_ROTATOR:
+                api_key = API_ROTATOR.get_current_key()
+                headers["X-API-Key"] = api_key
+                
+            res = requests.get(url, headers=headers, timeout=12)
             if res.status_code == 200:
                 data = res.json()
                 for item in data:
@@ -264,6 +352,10 @@ class TVStreamer:
 
     def on_open(self, ws):
         self.sessions = []
+        # Set market status to open when actively streaming
+        if API_ROTATOR:
+            API_ROTATOR.set_market_status(True)
+        
         # TradingView allows ~100 symbols per session. 
         # We'll split our symbols into multiple sessions if needed.
         batch_size = 80 # Using 80 to be safe
@@ -284,8 +376,14 @@ class TVStreamer:
     def on_error(self, ws, error):
         if "opcode=8" not in str(error):
             print(f"❌ WS Error: {error}")
+        # Disable market status on error
+        if API_ROTATOR:
+            API_ROTATOR.set_market_status(False)
 
     def on_close(self, ws, a, b):
+        # Disable market status when connection closes
+        if API_ROTATOR:
+            API_ROTATOR.set_market_status(False)
         print("🔌 Connection closed. Reconnecting in 10s...")
         time.sleep(10)
         self.start()
@@ -308,6 +406,13 @@ class TVStreamer:
 # MAIN
 # =========================
 def main():
+    global API_ROTATOR
+    
+    # Initialize API Key Rotator
+    API_ROTATOR = init_api_rotator()
+    print(f"✅ API Key Rotator initialized with {len(API_ROTATOR.api_keys)} keys")
+    print(f"🔄 Rotation interval: Every 2 hours")
+    
     init_db()
     
     # Initial Sync
@@ -363,8 +468,22 @@ def main():
 
     threading.Thread(target=cleanup_run_loop, daemon=True).start()
 
+    # Start API Key Rotation Monitor Thread (logs status every 30 minutes)
+    def api_rotation_monitor():
+        while True:
+            time.sleep(1800)  # Every 30 minutes
+            info = API_ROTATOR.get_all_keys_info()
+            print(f"\n📊 [API ROTATION STATUS]")
+            print(f"   Total Keys: {info['total_keys']}")
+            print(f"   Current Key: #{info['current_key_number']}")
+            print(f"   Last Rotation: {info['last_rotation'].strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"   Next Rotation: {info['next_rotation'].strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    threading.Thread(target=api_rotation_monitor, daemon=True).start()
+
     # Start Streaming
     # Our new TVStreamer handles multi-session internally to bypass the 100-symbol limit.
+    # Streamer will set market status to True when connected, False when disconnected
     streamer = TVStreamer(pairs)
     streamer.start()
 

@@ -162,7 +162,7 @@ function renderRelevanceBadge(relevance) {
     else if (rel.includes('noisy')) cssClass = 'rel-noisy';
 
     const label = relevance.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    return `<span class="relevance-badge ${cssClass}"><span class="relevance-dot"></span>${escapeHtml(label)}</span>`;
+    return `<span class="relevance-badge ${cssClass}">${escapeHtml(label)}</span>`;
 }
 
 function renderCategoryBadge(category) {
@@ -782,7 +782,7 @@ function renderIndianCompactModal(article, analysis) {
                     </div>
                     <div class="analysis-panel-badges">
                         <span class="signal-bucket-badge ${bucketCls}">${bucket}</span>
-                        <span class="tradeability-badge ${tradeCls}" style="margin-left:8px;">${tradeIcon} ${escapeHtml((tradeClass).replace(/_/g, ' ').toUpperCase())}</span>
+                        <span class="tradeability-badge ${tradeCls}">${tradeIcon} ${escapeHtml((tradeClass).replace(/_/g, ' ').toUpperCase())}</span>
                     </div>
                 </div>
 
@@ -794,7 +794,7 @@ function renderIndianCompactModal(article, analysis) {
                             <span class="analysis-score-sub" style="font-weight:700; text-transform:uppercase; letter-spacing:0.5px;">impact score</span>
                         </div>
                     </div>
-                    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px;">
+                    <div class="parent-bias">
                         <span class="bias-pill ${biasCls}">${biasArrow} ${coreView.market_bias || 'Neutral'} Bias</span>
                         <span style="font-size:0.7rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">HORIZON: ${escapeHtml(coreView.horizon || 'short_term').replace(/_/g, ' ').toUpperCase()}</span>
                     </div>
@@ -811,7 +811,7 @@ function renderIndianCompactModal(article, analysis) {
                 <!-- TAB 1: Overview -->
                 <div id="tab-ia-overview" class="analysis-tab-panel active">
                     <div class="analysis-summary-box">
-                        <p style="font-size:1.05rem; line-height:1.5; color:var(--text-primary); font-weight:500;">${escapeHtml(analysis.executive_summary || coreView.summary || '')}</p>
+                        <p style="line-height:1.5; color:var(--text-primary); font-weight:500;">${escapeHtml(analysis.executive_summary || coreView.summary || '')}</p>
                     </div>
 
                     <div class="summary-split-container">
@@ -960,15 +960,15 @@ function renderIndianCompactModal(article, analysis) {
                         <div class="analysis-bars-title" style="color:var(--accent-1);">Agent Decision Trace</div>
                         <div class="reasoning-trace-container" style="margin-top:12px; display:flex; flex-direction:column; gap:12px;">
                             ${(() => {
-                                const dt = parseJsonField(article.decision_trace) || analysis.decision_trace || {};
-                                const steps = [
-                                    { key: 'event_identification', label: '1. Event Identification', icon: '🔍' },
-                                    { key: 'entity_mapping', label: '2. Entity Mapping', icon: '🎯' },
-                                    { key: 'impact_scoring', label: '3. Impact Scoring', icon: '⚡' },
-                                    { key: 'remaining_impact', label: '4. Remaining Impact', icon: '⏱️' },
-                                    { key: 'tradeability_reasoning', label: '5. Tradeability Reasoning', icon: '⚖️' }
-                                ];
-                                return steps.map(step => `
+                const dt = parseJsonField(article.decision_trace) || analysis.decision_trace || {};
+                const steps = [
+                    { key: 'event_identification', label: '1. Event Identification', icon: '🔍' },
+                    { key: 'entity_mapping', label: '2. Entity Mapping', icon: '🎯' },
+                    { key: 'impact_scoring', label: '3. Impact Scoring', icon: '⚡' },
+                    { key: 'remaining_impact', label: '4. Remaining Impact', icon: '⏱️' },
+                    { key: 'tradeability_reasoning', label: '5. Tradeability Reasoning', icon: '⚖️' }
+                ];
+                return steps.map(step => `
                                     <div class="reasoning-step-card" style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); border-radius:8px; padding:12px;">
                                         <div style="font-size:0.75rem; color:var(--accent-1); font-weight:700; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
                                             <span>${step.icon}</span> ${step.label.toUpperCase()}
@@ -976,7 +976,7 @@ function renderIndianCompactModal(article, analysis) {
                                         <div style="font-size:0.88rem; color:var(--text-secondary); line-height:1.5;">${escapeHtml(dt[step.key] || 'No log for this step.')}</div>
                                     </div>
                                 `).join('');
-                            })()}
+            })()}
                         </div>
                     </div>
                 </div>
@@ -1111,7 +1111,7 @@ function openModal(article) {
     modalBody.innerHTML = `
         ${article.image_url ? `<img class="modal-image" src="${escapeHtml(article.image_url)}" alt="" onerror="this.style.display='none'">` : ''}
         
-        <div class="modal-header-top" style="display:flex; align-items:center; margin-bottom:16px;">
+        <div class="modal-header-top">
             <div class="modal-badges-row" style="display:flex; gap:8px;">
                 ${renderRelevanceBadge(article.news_relevance)}
                 ${renderCategoryBadge(article.news_category)}
@@ -1917,14 +1917,14 @@ async function fetchEvents() {
 function renderEvents(events) {
     const section = document.getElementById('eventsSection');
     const container = document.getElementById('eventsContainer');
-    
+
     if (!events || events.length === 0) {
         section.style.display = 'none';
         return;
     }
-    
+
     section.style.display = 'block';
-    
+
     let html = '';
     events.forEach(ev => {
         const timeAgoStr = timeAgo(ev.latest_update);
@@ -1935,7 +1935,14 @@ function renderEvents(events) {
         const isLive = lastUpdate > fourHoursAgo;
 
         html += `
-            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" title="Filter by ${escapeHtml(ev.event_title)}">
+            <div class="event-card ${isActive ? 'active' : ''}" 
+                 data-event-id="${ev.event_id}"
+                 data-event-title="${escapeHtml(ev.event_title)}"
+                 data-article-count="${ev.article_count}"
+                 data-latest-update="${ev.latest_update}"
+                 onclick="showEventDetail('${ev.event_id}', '${escapeHtml(ev.event_title)}', ${ev.article_count}, '${ev.latest_update}'); event.stopPropagation();"
+                 style="cursor: pointer; transition: all 0.2s ease;"
+                 title="Click to see all articles for this event">
                 <div class="event-card-header">
                     <span class="event-label">EVENT TRACKER</span>
                     <span class="event-time">${timeAgoStr}</span>
@@ -1944,7 +1951,7 @@ function renderEvents(events) {
                 <div class="event-footer">
                     <div class="event-updates">
                         <span class="event-pulse" style="display: ${isLive ? 'flex' : 'none'}"></span>
-                        <span>${ev.article_count} perfectly aligned updates</span>
+                        <span>${ev.article_count} articles</span>
                     </div>
                 </div>
             </div>
@@ -1965,12 +1972,12 @@ function checkScrollButtons() {
     if (!container || !leftBtn || !rightBtn) return;
 
     leftBtn.style.display = container.scrollLeft > 20 ? 'flex' : 'none';
-    
+
     const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 20;
     rightBtn.style.display = atEnd ? 'none' : 'flex';
 }
 
-window.filterByEvent = function(eventId, eventName) {
+window.filterByEvent = function (eventId, eventName) {
     if (currentEventId === eventId) {
         clearEventFilter(); // Toggle off if clicked again
         return;
@@ -1978,10 +1985,10 @@ window.filterByEvent = function(eventId, eventName) {
     currentEventId = eventId;
     document.getElementById('activeEventFilterPill').style.display = 'flex';
     document.getElementById('activeEventName').textContent = eventName;
-    
+
     const header = document.getElementById('allNewsHeader');
     if (header) header.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    
+
     fetchNews();
     fetchEvents();
 };
@@ -1989,18 +1996,18 @@ window.filterByEvent = function(eventId, eventName) {
 window.scrollEvents = function (direction) {
     const container = document.getElementById('eventsContainer');
     if (!container) return;
-    
+
     // Calculate scroll amount based on card width
     const firstCard = container.querySelector('.event-card');
     const scrollAmount = firstCard ? firstCard.offsetWidth + 20 : 340;
-    
+
     container.scrollBy({
         left: direction * scrollAmount,
         behavior: 'smooth'
     });
 }
 
-window.clearEventFilter = function() {
+window.clearEventFilter = function () {
     currentEventId = null;
     document.getElementById('activeEventFilterPill').style.display = 'none';
     fetchNews();
@@ -3026,3 +3033,235 @@ function updateMarketStatus() {
 // Call on load and check every minute
 setInterval(updateMarketStatus, 60000);
 setTimeout(updateMarketStatus, 500);
+
+// ====================================
+// EVENT DETAIL PANEL FUNCTIONS (NEW)
+// ====================================
+
+let eventDetailData = {
+    eventId: null,
+    eventTitle: null,
+    articles: [],
+    filteredArticles: []
+};
+
+function showEventDetail(eventId, eventTitle, articleCount, latestUpdate) {
+    const overlay = document.getElementById('eventDetailOverlay');
+    const titleEl = document.getElementById('eventDetailTitle');
+    const metaEl = document.getElementById('eventDetailMeta');
+    const countEl = document.getElementById('eventDetailArticleCount');
+    const updateEl = document.getElementById('eventDetailLatestUpdate');
+
+    eventDetailData.eventId = eventId;
+    eventDetailData.eventTitle = eventTitle;
+
+    titleEl.textContent = eventTitle;
+    countEl.textContent = articleCount;
+
+    const updateDate = new Date(latestUpdate);
+    const timeStr = updateDate.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Asia/Kolkata'
+    });
+    updateEl.textContent = timeStr + ' IST';
+
+    const updateTime = timeAgo(latestUpdate);
+    metaEl.innerHTML = `<span>${articleCount} articles</span><span>Updated ${updateTime}</span>`;
+
+    // Fetch event-specific news
+    fetchEventNews(eventId);
+
+    overlay.classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeEventDetail() {
+    const overlay = document.getElementById('eventDetailOverlay');
+    overlay.classList.remove('active');
+    document.body.style.overflow = '';
+    eventDetailData.eventId = null;
+}
+
+async function fetchEventNews(eventId) {
+    try {
+        const response = await fetch(`${API_BASE}/api/indian_news?event_id=${encodeURIComponent(eventId)}&limit=100`);
+        const json = await response.json();
+
+        if (json.status === 'success' && json.data) {
+            eventDetailData.articles = json.data;
+            eventDetailData.filteredArticles = json.data;
+            renderEventNews(eventDetailData.filteredArticles);
+        }
+    } catch (e) {
+        console.error("Failed to fetch event news", e);
+    }
+}
+
+function renderEventNews(articles) {
+    const grid = document.getElementById('eventDetailNewsGrid');
+    const emptyState = document.getElementById('eventDetailEmptyState');
+
+    if (!articles || articles.length === 0) {
+        grid.innerHTML = '';
+        emptyState.style.display = 'flex';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+
+    let html = '';
+    articles.forEach((article, idx) => {
+        if (!article || !article.id) return; // Skip invalid articles
+
+        const timeAgo_str = timeAgo(article.published);
+        const relevance = (article.news_relevance || 'neutral').toLowerCase();
+        const relevanceEmoji = getRelevanceEmoji(relevance);
+        const sourceDisplay = escapeHtml(article.source || 'News Source');
+        const titleDisplay = escapeHtml(article.title || 'Untitled Article');
+        // Show full description without truncation
+        const fullDesc = article.description || article.summary || 'No description available';
+        const descDisplay = escapeHtml(fullDesc);
+        const hasImage = article.image_url && article.image_url.trim().length > 0;
+        const imageUrl = hasImage ? `url('${escapeHtml(article.image_url)}')` : '';
+        const impactLevel = article.news_impact_level ? escapeHtml(article.news_impact_level).toLowerCase() : 'neutral';
+        let impactClass = 'impact-neutral';
+        if (impactLevel === 'positive' || impactLevel === 'high') impactClass = 'impact-positive';
+        if (impactLevel === 'negative' || impactLevel === 'low') impactClass = 'impact-negative';
+
+        // Get category
+        const category = article.news_category || article.category || 'General';
+        const categoryDisplay = escapeHtml(category);
+        let categoryClass = 'category-general';
+        const catLower = category.toLowerCase();
+        if (catLower.includes('market') || catLower.includes('stock')) categoryClass = 'category-market';
+        if (catLower.includes('tech') || catLower.includes('technology')) categoryClass = 'category-tech';
+        if (catLower.includes('economy') || catLower.includes('macro')) categoryClass = 'category-economy';
+        if (catLower.includes('crypto')) categoryClass = 'category-crypto';
+        if (catLower.includes('forex') || catLower.includes('currency')) categoryClass = 'category-forex';
+
+        // Map relevance to CSS class
+        let relevanceClass = 'neutral';
+        if (relevance.includes('noisy') || relevance.includes('noise')) relevanceClass = 'noisy';
+        else if (relevance.includes('useful')) relevanceClass = 'useful';
+        else if (relevance.includes('medium')) relevanceClass = 'medium';
+        else if (relevance.includes('very high')) relevanceClass = 'useful';
+
+        // Mark noisy articles
+        const isNoisy = relevance === 'noisy' || relevance === 'noise';
+        const noiseClass = isNoisy ? ' noisy-article' : '';
+
+        html += `
+            <div class="event-news-card${noiseClass}" data-article-id="${article.id}" data-relevance="${relevance}" onclick="openArticleDetail(event, ${idx})">
+                ${hasImage ? `<div class="event-news-card-image" style="background-image: ${imageUrl}; background-size: cover; background-position: center;"></div>` : ''}
+                <div class="event-news-card-content">
+                    <div class="event-news-card-meta">
+                        <span class="event-news-source">${sourceDisplay}</span>
+                        <span class="event-news-time">${timeAgo_str}</span>
+                    </div>
+                    <div class="event-news-card-badges">
+                        <span class="badge-category ${categoryClass}">${categoryDisplay}</span>
+                        <span class="badge-relevance ${relevanceClass}">${relevanceEmoji} ${relevance}</span>
+                    </div>
+                    <h3 class="event-news-card-title">${titleDisplay}</h3>
+                    <p class="event-news-card-desc">${descDisplay}</p>
+                    
+                </div>
+                <div class="event-news-card-action">
+                    <button class="read-more-btn" onclick="event.stopPropagation();">Read Full →</button>
+                </div>
+            </div>
+        `;
+    });
+
+    grid.innerHTML = html;
+}
+
+function openArticleDetail(event, articleIdx) {
+    event.stopPropagation();
+    if (articleIdx < 0 || articleIdx >= eventDetailData.articles.length) return;
+    const article = eventDetailData.articles[articleIdx];
+    openModal(article);
+}
+
+function getRelevanceEmoji(relevance) {
+    const map = {
+        'very high useful': '🔥',
+        'useful': '🟢',
+        'medium': '🟡',
+        'neutral': '⚖️',
+        'noisy': '🔴'
+    };
+    return map[relevance] || '📊';
+}
+
+// Event detail panel search
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('eventDetailSearchInput');
+    const relevanceSelect = document.getElementById('eventDetailRelevanceFilter');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', debounce(filterEventNews, SEARCH_DEBOUNCE));
+    }
+
+    if (relevanceSelect) {
+        relevanceSelect.addEventListener('change', filterEventNews);
+    }
+
+    // Close on overlay click
+    const overlay = document.getElementById('eventDetailOverlay');
+    if (overlay) {
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                closeEventDetail();
+            }
+        });
+    }
+});
+
+function filterEventNews() {
+    const searchInput = document.getElementById('eventDetailSearchInput');
+    const relevanceSelect = document.getElementById('eventDetailRelevanceFilter');
+
+    const searchQuery = (searchInput?.value || '').toLowerCase();
+    const relevanceFilter = relevanceSelect?.value || 'all';
+
+    eventDetailData.filteredArticles = eventDetailData.articles.filter(article => {
+        const matchSearch = !searchQuery ||
+            article.title.toLowerCase().includes(searchQuery) ||
+            (article.description || '').toLowerCase().includes(searchQuery) ||
+            (article.source || '').toLowerCase().includes(searchQuery);
+
+        const matchRelevance = relevanceFilter === 'all' ||
+            (article.news_relevance || '').toLowerCase() === relevanceFilter.toLowerCase();
+
+        return matchSearch && matchRelevance;
+    });
+
+    renderEventNews(eventDetailData.filteredArticles);
+}
+
+// Update renderEvents to call the new event detail function
+function updateEventRenderFunction() {
+    // This modifies the event click handler to show detail panel instead
+    const events = document.querySelectorAll('.event-card');
+    events.forEach(card => {
+        card.style.cursor = 'pointer';
+        card.addEventListener('click', function () {
+            const eventId = this.getAttribute('data-event-id');
+            const eventTitle = this.getAttribute('data-event-title');
+            const articleCount = this.getAttribute('data-article-count');
+            const latestUpdate = this.getAttribute('data-latest-update');
+
+            showEventDetail(eventId, eventTitle, articleCount, latestUpdate);
+        });
+    });
+}
+
+function debounce(func, wait) {
+    let timeout;
+    return function (...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
+}
