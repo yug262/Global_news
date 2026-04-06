@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-INDIAN_MARKET_CLASSIFY_PROMPT
+from app.core.prompt import INDIAN_MARKET_CLASSIFY_PROMPT
 load_dotenv()
 
 logger = logging.getLogger("india_agent")
@@ -17,7 +17,7 @@ if not logger.handlers:
     _ch.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S UTC"))
     logger.addHandler(_ch)
 
-MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.0-flash")
+MODEL_NAME = os.getenv("MODEL_NAME", "gemini-3.1-flash-lite-preview")
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
@@ -83,12 +83,36 @@ async def analyze_indian_news(title: str, description: str = "") -> Optional[Dic
             logger.error("Failed standard JSON parse, attempting literal_eval fallback")
             data = ast.literal_eval(raw_text)
         
-        # Validation / Normalization
+        # 1. Validation & Enum Clamping
+        ALLOWED_CATEGORIES = {"corporate_event", "government_policy", "macro_data", "global_macro_impact", "commodity_macro", "sector_trend", "institutional_activity", "sentiment_indicator", "price_action_noise", "routine_market_update", "other"}
+        ALLOWED_RELEVANCE = {"High Useful", "Useful", "Medium", "Neutral", "Noisy"}
+
+        category = str(data.get("category", "routine_market_update")).strip()
+        if category not in ALLOWED_CATEGORIES:
+            category = "other"
+
+        relevance = str(data.get("relevance", "Noisy")).strip()
+        if relevance not in ALLOWED_RELEVANCE:
+            relevance = "Noisy"
+
+        # 2. Strict Parse Mentions
+        company_mentions = data.get("company_mentions", [])
+        if not isinstance(company_mentions, list):
+            company_mentions = []
+            
+        # 3. Call Resolver safely
+        if not company_mentions:
+            resolved_symbols = []
+        else:
+            from app.ind.tools import strict_resolve_symbols
+            resolved_symbols = strict_resolve_symbols(company_mentions)
+            
+        # 4. Final Output Formation
         return {
-            "category": str(data.get("category", "routine_market_update")),
-            "relevance": str(data.get("relevance", "Noisy")),
+            "category": category,
+            "relevance": relevance,
             "reason": str(data.get("reason", "No specific reason provided.")),
-            "symbols": list(data.get("symbols", []))
+            "symbols": resolved_symbols
         }
 
     except Exception as e:
