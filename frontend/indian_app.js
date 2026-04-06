@@ -39,6 +39,15 @@ const connectionBanner = document.getElementById('connectionBanner');
 const toastContainer = document.getElementById('toastContainer');
 const themeToggle = document.getElementById('themeToggle');
 
+// ---- Mobile Menu Elements ----
+const mobileMenuTrigger = document.getElementById('mobileMenuTrigger');
+const mobileDrawer = document.getElementById('mobileDrawer');
+const drawerOverlay = document.getElementById('drawerOverlay');
+const drawerClock = document.getElementById('drawerClock');
+const drawerCount = document.getElementById('drawerCount');
+
+let isDrawerOpen = false;
+
 // ---- Theme Toggle ----
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -61,7 +70,9 @@ function updateClock() {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: true, timeZone: 'Asia/Kolkata'
     };
-    clockEl.textContent = now.toLocaleTimeString('en-US', options) + ' IST';
+    const timeStr = now.toLocaleTimeString('en-US', options) + ' IST';
+    clockEl.textContent = timeStr;
+    if (drawerClock) drawerClock.textContent = timeStr;
 }
 
 setInterval(updateClock, 1000);
@@ -1692,6 +1703,9 @@ async function fetchNews() {
 
         if (json.status === 'success') {
             newsData = json.data;
+            if (articleCount) articleCount.textContent = `${json.data.length} articles`;
+            if (drawerCount) drawerCount.textContent = `${json.data.length} articles`;
+
             // The backend handles the `analyzed_only` filter, but we filter client-side just in case
             let displayData = [...newsData];
             if (showOnlyAnalyzed) displayData = displayData.filter(a => a.impact_score != null);
@@ -1804,6 +1818,32 @@ if (relevanceFilter) {
     });
 }
 
+// ---- Mobile Drawer Toggle ----
+function toggleMobileMenu() {
+    isDrawerOpen = !isDrawerOpen;
+    if (isDrawerOpen) {
+        mobileMenuTrigger.classList.add('active');
+        mobileDrawer.classList.add('active');
+        drawerOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden'; // Stop background scroll
+    } else {
+        mobileMenuTrigger.classList.remove('active');
+        mobileDrawer.classList.remove('active');
+        drawerOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+if (mobileMenuTrigger) mobileMenuTrigger.addEventListener('click', toggleMobileMenu);
+if (drawerOverlay) drawerOverlay.addEventListener('click', toggleMobileMenu);
+
+// Close drawer on link click
+document.querySelectorAll('.drawer-link').forEach(link => {
+    link.addEventListener('click', () => {
+        if (isDrawerOpen) toggleMobileMenu();
+    });
+});
+
 if (analyzedToggle) {
     analyzedToggle.addEventListener('click', () => {
         showOnlyAnalyzed = !showOnlyAnalyzed;
@@ -1862,21 +1902,45 @@ function renderEvents(events) {
     events.forEach(ev => {
         const timeAgoStr = timeAgo(ev.latest_update);
         const isActive = currentEventId === ev.event_id;
+        // Dynamic "Live" indicator if updated in last 4 hours (Indian market is more volatile)
+        const lastUpdate = new Date(ev.latest_update).getTime();
+        const fourHoursAgo = Date.now() - (4 * 60 * 60 * 1000);
+        const isLive = lastUpdate > fourHoursAgo;
+
         html += `
-            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" style="min-width: 260px; background: var(--bg-card); border: 1px solid ${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}; border-radius: 12px; padding: 14px; cursor: pointer; transition: all 0.2s; box-shadow: ${isActive ? '0 4px 15px rgba(108,99,255,0.15)' : 'none'};" onmouseover="this.style.borderColor='rgba(108,99,255,0.5)'" onmouseout="this.style.borderColor='${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}'">
-                <div style="font-size: 0.72rem; color: #a89fff; font-weight: 700; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; letter-spacing: 0.5px;">
-                    <span>EVENT TRACKER</span>
-                    <span style="color: var(--text-muted); font-weight: 500;">${timeAgoStr}</span>
+            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" title="Filter by ${escapeHtml(ev.event_title)}">
+                <div class="event-card-header">
+                    <span class="event-label">EVENT TRACKER</span>
+                    <span class="event-time">${timeAgoStr}</span>
                 </div>
-                <h3 style="font-size: 1.05rem; color: var(--text-main); margin: 0 0 12px 0; line-height: 1.35; font-weight: 700;">${escapeHtml(ev.event_title)}</h3>
-                <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <span style="display:inline-block; width:6px; height:6px; background:#00c8b4; border-radius:50%; box-shadow: 0 0 6px #00c8b4;"></span>
-                    ${ev.article_count} perfectly aligned updates
+                <h3 class="event-card-title">${escapeHtml(ev.event_title)}</h3>
+                <div class="event-footer">
+                    <div class="event-updates">
+                        <span class="event-pulse" style="display: ${isLive ? 'flex' : 'none'}"></span>
+                        <span>${ev.article_count} perfectly aligned updates</span>
+                    </div>
                 </div>
             </div>
         `;
     });
     container.innerHTML = html;
+
+    // Attach scroll listener for buttons visibility
+    container.addEventListener('scroll', checkScrollButtons, { passive: true });
+    // Initial check
+    setTimeout(checkScrollButtons, 100);
+}
+
+function checkScrollButtons() {
+    const container = document.getElementById('eventsContainer');
+    const leftBtn = document.querySelector('.scroll-btn.left');
+    const rightBtn = document.querySelector('.scroll-btn.right');
+    if (!container || !leftBtn || !rightBtn) return;
+
+    leftBtn.style.display = container.scrollLeft > 20 ? 'flex' : 'none';
+    
+    const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 20;
+    rightBtn.style.display = atEnd ? 'none' : 'flex';
 }
 
 window.filterByEvent = function(eventId, eventName) {
@@ -1894,6 +1958,20 @@ window.filterByEvent = function(eventId, eventName) {
     fetchNews();
     fetchEvents();
 };
+
+window.scrollEvents = function (direction) {
+    const container = document.getElementById('eventsContainer');
+    if (!container) return;
+    
+    // Calculate scroll amount based on card width
+    const firstCard = container.querySelector('.event-card');
+    const scrollAmount = firstCard ? firstCard.offsetWidth + 20 : 340;
+    
+    container.scrollBy({
+        left: direction * scrollAmount,
+        behavior: 'smooth'
+    });
+}
 
 window.clearEventFilter = function() {
     currentEventId = null;

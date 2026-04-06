@@ -21,7 +21,7 @@ from urllib.parse import urljoin
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from app.core.db import execute_query, fetch_one, execute_many, fetch_all
 from app.core.agent import classify_news_relevance
-from app.core.event_engine import resolve_event
+from app.core.event_engine import process_event_grouping
 # ══════════════════════════════════════════════════════
 #  CONFIG
 # ══════════════════════════════════════════════════════
@@ -733,23 +733,25 @@ def fetch_and_store_single(fn):
             title_hash = get_hash(article['title'])
             affected_pairs = c_res.get("affected_forex_pairs") or []
             
-            # Resolve deterministic event
-            event_data = resolve_event(article['title'], actual_published)
-            ev_id = event_data['event_id']
-            ev_title = event_data['event_title']
-            
             execute_query(
                 """INSERT INTO news (title, link, title_hash, published, source, description, image_url,
-                                    news_relevance, news_category, news_reason, affected_forex_pairs,
-                                    event_id, event_title)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    news_relevance, news_category, news_reason, affected_forex_pairs)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    ON CONFLICT (title_hash) DO NOTHING""",
                 (article['title'], article['link'], title_hash, actual_published,
                  article['source'], description, image_url,
-                 relevance, category, reason, json.dumps(affected_pairs),
-                 ev_id, ev_title)
+                 relevance, category, reason, json.dumps(affected_pairs))
             )
             new_count += 1
+            
+            # Trigger stateful event grouping AFTER insert
+            try:
+                new_row = fetch_one("SELECT id FROM news WHERE title_hash = %s", (title_hash,))
+                if new_row:
+                    cat = c_res.get("category", "GLOBAL")
+                    process_event_grouping(new_row['id'], article['title'], cat, table_name='news')
+            except Exception as ge:
+                logger.warning(f"Event grouping error: {ge}")
             
             # Add to memory cache so next scrape is O(1)
             with _cache_lock:

@@ -10,13 +10,12 @@ const CONNECTION_FAIL_THRESHOLD = 2;
 
 let currentSource = 'all';
 let searchQuery = '';
-let currentEventId = null;
 let newsData = [];
 let sourceFilters = [];
 const analyzingArticles = new Set();
 
-let showOnlyAnalyzed = false;
 let currentRelevance = 'all';
+let currentEventId = null;
 let isFetching = false;
 let consecutiveFailures = 0;
 let searchDebounceTimer = null;
@@ -40,6 +39,16 @@ const connectionBanner = document.getElementById('connectionBanner');
 const toastContainer = document.getElementById('toastContainer');
 const themeToggle = document.getElementById('themeToggle');
 
+// ---- Mobile Menu Elements ----
+const mobileMenuTrigger = document.getElementById('mobileMenuTrigger');
+const mobileDrawer = document.getElementById('mobileDrawer');
+const drawerOverlay = document.getElementById('drawerOverlay');
+const drawerClock = document.getElementById('drawerClock');
+const drawerCount = document.getElementById('drawerCount');
+
+let showOnlyAnalyzed = false;
+let isDrawerOpen = false;
+
 // ---- Theme Toggle ----
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
@@ -62,7 +71,9 @@ function updateClock() {
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: true, timeZone: 'Asia/Kolkata'
     };
-    clockEl.textContent = now.toLocaleTimeString('en-US', options) + ' IST';
+    const timeStr = now.toLocaleTimeString('en-US', options) + ' IST';
+    clockEl.textContent = timeStr;
+    if (drawerClock) drawerClock.textContent = timeStr;
 }
 
 setInterval(updateClock, 1000);
@@ -73,9 +84,6 @@ function timeAgo(dateStr) {
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now - date;
-    
-    if (diffMs < 0) return 'Just now'; // Handle future/clock-drift gracefully
-    
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
 
@@ -399,7 +407,7 @@ function renderForexPairs(article) {
     html += `<span class="affected-pairs-label" title="Automatically detected forex pairs affected by this news">Impact:</span>`;
     pairs.forEach(pair => {
         const display = pair.substring(0, 3) + '/' + pair.substring(3, 6);
-        html += `<button class="pair-pill-btn" onclick="event.stopPropagation(); selectChartPair('${pair}')" title="Show live chart for ${display}">
+        html += `<button class="pair-pill-btn" onclick="event.stopPropagation(); selectChartPair('OANDA:${pair}')" title="Show live chart for ${display}">
             <span class="pair-pill-icon">📉</span> ${display}
         </button>`;
     });
@@ -1002,7 +1010,7 @@ function openModal(article) {
         <h2 class="modal-title">${escapeHtml(article.title)}</h2>
         ${renderForexPairs(article)}
         <div class="modal-timestamps">
-            <span class="modal-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(article.published > article.created_at ? article.created_at : article.published)} · ${formatTime(article.published > article.created_at ? article.created_at : article.published)}</span>
+            <span class="modal-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(article.published)} · ${formatTime(article.published)}</span>
             <span class="modal-timestamp-line"><strong>Scraped:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
         </div>
         ${descriptionHtml}
@@ -1273,13 +1281,10 @@ document.addEventListener('keydown', (e) => {
 
 // ---- Card Timestamp Rendering ----
 function renderCardTimestamps(article) {
-    // Ensure logical display: Source Posted cannot be after Scraped
-    const pubTime = article.published > article.created_at ? article.created_at : article.published;
-    
     return `
         <div class="card-timestamps">
-            <span class="card-timestamp-line"><strong>Source Posted:</strong> ${timeAgo(pubTime)} · ${formatTime(pubTime)}</span>
-            <span class="card-timestamp-line"><strong>Scraped:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
+            <span class="card-timestamp-line"><strong>Published:</strong> ${timeAgo(article.published)} · ${formatTime(article.published)}</span>
+            <span class="card-timestamp-line"><strong>Posted:</strong> ${timeAgo(article.created_at)} · ${formatTime(article.created_at)}</span>
         </div>
     `;
 }
@@ -1569,7 +1574,9 @@ async function fetchNews() {
         const json = await res.json();
 
         if (json.status === 'success') {
-            newsData = json.data;
+            if (articleCount) articleCount.textContent = `${json.data.length} articles`;
+            if (drawerCount) drawerCount.textContent = `${json.data.length} articles`;
+
             // The backend handles the `analyzed_only` filter, but we filter client-side just in case
             let displayData = [...newsData];
             if (showOnlyAnalyzed) displayData = displayData.filter(a => a.impact_score != null);
@@ -1594,6 +1601,114 @@ async function fetchNews() {
         hideRefreshIndicator();
     }
 }
+
+// ---- Fetch Events ----
+async function fetchEvents() {
+    try {
+        const res = await fetch(`${API_BASE}/api/events/global`);
+        const json = await res.json();
+        if (json.status === 'success') {
+            renderEvents(json.data);
+        }
+    } catch (e) {
+        console.error("Failed to fetch events", e);
+    }
+}
+
+function renderEvents(events) {
+    const section = document.getElementById('eventsSection');
+    const container = document.getElementById('eventsContainer');
+    
+    if (!events || events.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    let html = '';
+    events.forEach(ev => {
+        const timeAgoStr = timeAgo(ev.latest_update);
+        const isActive = currentEventId === ev.event_id;
+        
+        // Dynamic "Live" indicator if updated in last 2 hours
+        const lastUpdate = new Date(ev.latest_update).getTime();
+        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
+        const isLive = lastUpdate > twoHoursAgo;
+
+        html += `
+            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" title="Filter by ${escapeHtml(ev.event_title)}">
+                <div class="event-card-header">
+                    <span class="event-label">EVENT TRACKER</span>
+                    <span class="event-time">${timeAgoStr}</span>
+                </div>
+                <h3 class="event-card-title">${escapeHtml(ev.event_title)}</h3>
+                <div class="event-footer">
+                    <div class="event-updates">
+                        <span class="event-pulse" style="display: ${isLive ? 'block' : 'none'}"></span>
+                        <span>${ev.article_count} perfectly aligned updates</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+
+    // Attach scroll listener for buttons visibility
+    container.addEventListener('scroll', checkScrollButtons, { passive: true });
+    // Initial check
+    setTimeout(checkScrollButtons, 100);
+}
+
+function checkScrollButtons() {
+    const container = document.getElementById('eventsContainer');
+    const leftBtn = document.querySelector('.scroll-btn.left');
+    const rightBtn = document.querySelector('.scroll-btn.right');
+    if (!container || !leftBtn || !rightBtn) return;
+
+    leftBtn.style.display = container.scrollLeft > 20 ? 'flex' : 'none';
+    
+    const atEnd = container.scrollLeft + container.clientWidth >= container.scrollWidth - 20;
+    rightBtn.style.display = atEnd ? 'none' : 'flex';
+}
+
+window.filterByEvent = function(eventId, eventName) {
+    if (currentEventId === eventId) {
+        clearEventFilter(); // Toggle off if clicked again
+        return;
+    }
+    currentEventId = eventId;
+    document.getElementById('activeEventFilterPill').style.display = 'flex';
+    document.getElementById('activeEventName').textContent = eventName;
+    
+    // Scroll to top of news grid
+    const newsHeader = document.getElementById('newsHeader') || document.querySelector('.news-grid-header') || newsGrid;
+    if (newsHeader) newsHeader.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    fetchNews();
+    fetchEvents();
+};
+
+window.clearEventFilter = function() {
+    currentEventId = null;
+    document.getElementById('activeEventFilterPill').style.display = 'none';
+    fetchNews();
+    fetchEvents();
+};
+
+window.scrollEvents = function(direction) {
+    const container = document.getElementById('eventsContainer');
+    if (!container) return;
+    
+    // Calculate scroll amount based on card width
+    const firstCard = container.querySelector('.event-card');
+    const scrollAmount = firstCard ? firstCard.offsetWidth + 20 : 340;
+    
+    container.scrollBy({
+        left: direction * scrollAmount,
+        behavior: 'smooth'
+    });
+};
 
 // ---- Fetch Footer Stats ----
 async function fetchStats() {
@@ -1682,6 +1797,32 @@ if (relevanceFilter) {
     });
 }
 
+// ---- Mobile Drawer Toggle ----
+function toggleMobileMenu() {
+    isDrawerOpen = !isDrawerOpen;
+    if (isDrawerOpen) {
+        mobileMenuTrigger.classList.add('active');
+        mobileDrawer.classList.add('active');
+        drawerOverlay.classList.add('active');
+        document.body.style.overflow = 'hidden'; // Stop background scroll
+    } else {
+        mobileMenuTrigger.classList.remove('active');
+        mobileDrawer.classList.remove('active');
+        drawerOverlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+}
+
+if (mobileMenuTrigger) mobileMenuTrigger.addEventListener('click', toggleMobileMenu);
+if (drawerOverlay) drawerOverlay.addEventListener('click', toggleMobileMenu);
+
+// Close drawer on link click
+document.querySelectorAll('.drawer-link').forEach(link => {
+    link.addEventListener('click', () => {
+        if (isDrawerOpen) toggleMobileMenu();
+    });
+});
+
 if (analyzedToggle) {
     analyzedToggle.addEventListener('click', () => {
         showOnlyAnalyzed = !showOnlyAnalyzed;
@@ -1711,75 +1852,6 @@ setInterval(() => {
     fetchStats();
     fetchEvents();
 }, REFRESH_INTERVAL);
-
-// ---- Fetch Events ----
-async function fetchEvents() {
-    try {
-        const res = await fetch(`${API_BASE}/api/events/global`);
-        const json = await res.json();
-        if (json.status === 'success') {
-            renderEvents(json.data);
-        }
-    } catch (e) {
-        console.error("Failed to fetch events", e);
-    }
-}
-
-function renderEvents(events) {
-    const section = document.getElementById('eventsSection');
-    const container = document.getElementById('eventsContainer');
-    
-    if (!events || events.length === 0) {
-        section.style.display = 'none';
-        return;
-    }
-    
-    section.style.display = 'block';
-    
-    let html = '';
-    events.forEach(ev => {
-        const timeAgoStr = timeAgo(ev.latest_update);
-        const isActive = currentEventId === ev.event_id;
-        html += `
-            <div class="event-card ${isActive ? 'active' : ''}" onclick="filterByEvent('${ev.event_id}', '${escapeHtml(ev.event_title)}')" style="min-width: 260px; background: var(--bg-card); border: 1px solid ${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}; border-radius: 12px; padding: 14px; cursor: pointer; transition: all 0.2s; box-shadow: ${isActive ? '0 4px 15px rgba(108,99,255,0.15)' : 'none'};" onmouseover="this.style.borderColor='rgba(108,99,255,0.5)'" onmouseout="this.style.borderColor='${isActive ? 'rgba(108,99,255,0.7)' : 'rgba(255,255,255,0.08)'}'">
-                <div style="font-size: 0.72rem; color: #a89fff; font-weight: 700; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; letter-spacing: 0.5px;">
-                    <span>EVENT TRACKER</span>
-                    <span style="color: var(--text-muted); font-weight: 500;">${timeAgoStr}</span>
-                </div>
-                <h3 style="font-size: 1.05rem; color: var(--text-main); margin: 0 0 12px 0; line-height: 1.35; font-weight: 700;">${escapeHtml(ev.event_title)}</h3>
-                <div style="font-size: 0.8rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <span style="display:inline-block; width:6px; height:6px; background:#00c8b4; border-radius:50%; box-shadow: 0 0 6px #00c8b4;"></span>
-                    ${ev.article_count} perfectly aligned updates
-                </div>
-            </div>
-        `;
-    });
-    container.innerHTML = html;
-}
-
-window.filterByEvent = function(eventId, eventName) {
-    if (currentEventId === eventId) {
-        clearEventFilter(); // Toggle off if clicked again
-        return;
-    }
-    currentEventId = eventId;
-    document.getElementById('activeEventFilterPill').style.display = 'flex';
-    document.getElementById('activeEventName').textContent = eventName;
-    
-    const header = document.getElementById('allNewsHeader');
-    if (header) header.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    
-    fetchNews();
-    fetchEvents();
-};
-
-window.clearEventFilter = function() {
-    currentEventId = null;
-    document.getElementById('activeEventFilterPill').style.display = 'none';
-    fetchNews();
-    fetchEvents();
-};
-
 
 
 // ============================================
@@ -1923,16 +1995,10 @@ async function doChartSearch(query) {
 }
 
 function selectChartPair(symbol) {
-    if (!symbol) return;
+    console.log('[CHART] Selecting pair:', symbol);
     
-    // Sanitize symbol: "USD/INR" -> "USDINR" (unless it has a prefix like "OANDA:")
-    let cleanSymbol = symbol;
-    if (!symbol.includes(':')) {
-        cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    }
-    
-    console.log('[CHART] Selecting pair:', symbol, '-> Clean:', cleanSymbol);
-    currentChartSymbol = cleanSymbol;
+    // Update global state first to prevent race condition
+    currentChartSymbol = symbol;
     
     // Open the chart panel (which will call loadChart(currentChartSymbol))
     if (typeof openChartPanel === 'function') {
