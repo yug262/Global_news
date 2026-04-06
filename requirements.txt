@@ -1,10 +1,7 @@
-yfinance
-ccxt
 fastapi
 uvicorn
 python-dotenv
-google-genai
-psycopg2
+google-generativeai
 aiohttp
 feedparser
 cloudscraper
@@ -16,9 +13,12 @@ setuptools
 soupsieve
 typing_extensions
 urllib3
-psycopg2
 psycopg2-binary
 lxml
 google-genai
 playwright
 playwright-stealth
+ccxt
+yfinance
+websocket
+websocket-client

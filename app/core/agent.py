@@ -228,7 +228,7 @@ def remove_empty_objects(arr: list) -> list:
     for item in arr:
         if not isinstance(item, dict):
             continue
-        if any(v not in ("", 0, None, [], {}) for v in item.values()):
+        if any(v not in ("", None, [], {}) for v in item.values()):
             cleaned.append(item)
     return cleaned
 
@@ -370,13 +370,13 @@ def classify_news_relevance(
     Returns:
     {
         "category": "...",
-        "should_analyze": bool,
+        "relevance": "Very High Useful | Crypto Useful | Forex Useful | Useful | Medium | Neutral | Noisy",
         "reason": "..."
     }
     """
     default_resp = {
-        "category": "Noisy",
-        "should_analyze": False,
+        "category": "None",
+        "relevance": "None",
         "reason": "Classification failed or skipped"
     }
 
@@ -434,30 +434,41 @@ repetition_pressure: {filter_ctx.get("repetition_pressure", 0)}
 
         data = json.loads(json_str)
 
-        category = str(data.get("category", "Noisy")).strip()
-        should_analyze = bool(data.get("should_analyze", False))
-        reason = str(data.get("reason", "")).strip()
+        category = str(data.get("category") or "None").strip()
+        relevance = str(data.get("relevance") or "None").strip()
+        reason = str(data.get("reason") or "").strip()
+        affected_pairs = data.get("affected_forex_pairs") or []
+        if not isinstance(affected_pairs, list):
+            affected_pairs = []
 
         # Safety normalization
         allowed_categories = {
-            "Very High Useful",
-            "Crypto Useful",
-            "Forex Useful",
-            "Useful",
-            "Medium",
-            "Neutral",
-            "Noisy",
+            "macro_data_release", "central_bank_policy", "central_bank_guidance",
+            "institutional_research", "regulatory_policy", "crypto_ecosystem_event",
+            "liquidity_flows", "geopolitical_event", "systemic_risk_event",
+            "commodity_supply_shock", "market_structure_event", "sector_trend_analysis",
+            "sentiment_indicator", "routine_market_update", "price_action_noise"
         }
-        if category not in allowed_categories:
-            category = "Noisy"
-            should_analyze = False
+        allowed_relevance = {
+            "Very High Useful", "Crypto Useful", "Forex Useful", "Useful",
+            "Medium", "Neutral", "Noisy"
+        }
+
+        if category not in allowed_categories and category != "None":
+            category = "None"
             if not reason:
                 reason = "Invalid category returned by classifier"
 
+        if relevance not in allowed_relevance and relevance != "None":
+            relevance = "None"
+            if not reason:
+                reason = "Invalid relevance returned by classifier"
+
         return {
             "category": category,
-            "should_analyze": should_analyze,
+            "relevance": relevance,
             "reason": reason,
+            "affected_forex_pairs": affected_pairs,
         }
 
     except Exception as e:
@@ -473,13 +484,17 @@ def classify_batch(items: list[tuple[str, str]]) -> list[dict]:
     if not items:
         return []
 
-    default_resp = {"category": "Noisy", "should_analyze": False, "reason": "Classification failed or skipped"}
-    results = [default_resp] * len(items)
+    default_resp = {
+        "category": "None",
+        "relevance": "None",
+        "reason": "Classification failed or skipped"
+    }
+    results = [default_resp.copy() for _ in items]
 
     def _classify(idx, title, desc):
         return idx, classify_news_relevance(title, desc)
 
-    with ThreadPoolExecutor(max_workers=min(len(items), 5)) as executor:
+    with ThreadPoolExecutor(max_workers=min(len(items), 20)) as executor:
         futures = {
             executor.submit(_classify, i, title, desc): i
             for i, (title, desc) in enumerate(items)
@@ -493,12 +508,15 @@ def classify_batch(items: list[tuple[str, str]]) -> list[dict]:
     return results
 
 
-def analyze_news(title: str, published_iso: str, summary: str = "", source: str = "") -> dict | None:
+def analyze_news(title: str, published_iso: str, summary: str = "", source: str = "", current_news_id: int | None = None) -> dict | None:
     """
     Returns JSON matching schema template.
     """
     analysis_time = datetime.now(timezone.utc).isoformat()
     age_label, age_human, hours_old = _calculate_news_age(published_iso)
+
+    # Note: Filter agent classification (category, relevance) is now handled 
+    # upstream by the scrapers (monitor.py/scraper.py) to save tokens and time.
 
     # priced-in duplicate check using DB
     news_check = search_recent_news(title, current_news_id=current_news_id, hours_back=48)
@@ -625,6 +643,8 @@ def analyze_news(title: str, published_iso: str, summary: str = "", source: str 
                 reaction_pct: {reaction_pct}
                 atr_pct_reference: {atr_pct_reference}
                 reaction_status: {reaction_status}
+                asset_movements_since_publish:
+                {movement_text}
 
                 MARKET DATA
                 forex: {json.dumps(market_data.get("forex", {}))}
@@ -802,9 +822,19 @@ def save_analysis(news_id: int, analysis: dict):
             news_priced_in         = %s,
             suggestions_data       = %s,
             suggestions_status     = %s,
-            suggestions_summary    = %s
+            suggestions_summary    = %s,
+            affected_forex_pairs   = %s
         WHERE id = %s
     """
+
+    # Ensure affected_forex_pairs is populated (classifier vs deep analyzer schema mismatch)
+    final_pairs = analysis.get("affected_forex_pairs", []) or []
+    if not final_pairs:
+        # Fallback: extract pairs from the deep analysis directional_bias
+        for item in forex_items:
+            pair = item.get("pair") or item.get("asset")
+            if pair and pair not in final_pairs:
+                final_pairs.append(pair)
 
     params = (
         json.dumps(analysis),
@@ -826,6 +856,7 @@ def save_analysis(news_id: int, analysis: dict):
         json.dumps(suggestions),
         (suggestions.get("status", "") or "")[:30],
         (suggestions.get("summary", "") or "")[:500],
+        json.dumps(final_pairs),
         news_id,
     )
 
@@ -1043,8 +1074,8 @@ def create_predictions(news_id: int, analysis: dict):
                         except Exception:
                             pass
                     if start_price is None:
-                        _log(f"[PRED] No price for {symbol}, skipping")
-                        continue
+                        _log(f"[PRED] No price for {symbol}, setting start_price to 0")
+                        start_price = 0.0
 
                 if direction.lower() in ("positive", "bullish", "up"):
                     target_price = start_price * (1 + predicted_move / 100)
@@ -1090,8 +1121,10 @@ def create_suggestions(news_id: int, analysis: dict):
         return
 
     # prevent duplicates on re-analysis
-    _exec("DELETE FROM suggestions WHERE news_id = %s", (news_id,))
-
+    try:
+        _exec("DELETE FROM suggestions WHERE news_id = %s", (news_id,))
+    except Exception:
+        pass
     created = 0
 
     for suggestion_type in ("buy", "sell", "watch", "avoid"):
