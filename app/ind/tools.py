@@ -294,6 +294,80 @@ def resolve_company(name: str) -> dict:
     return {"input_name": name, "status": "unresolved", "symbol": None, "company_name": ""}
 
 
+def strict_resolve_symbols(extracted_names: list[str]) -> list[str]:
+    """
+    Strictly maps an array of literal company names to NSE symbols. NO fuzzy matching.
+    Drops known group names (Tata, Adani, Reliance) unless exact mapped.
+    Drops any name that maps to multiple distinct entities.
+    """
+    if not extracted_names:
+        return []
+
+    valid_symbols = set()
+    companies = _get_companies_list()
+
+    # Pre-compute exact mapping for incoming entities
+    exact_map = {}
+    for row in companies:
+        cname = (row.get("company_name") or "").strip()
+        sym = (row.get("nse_symbol") or "").strip().upper()
+        if not cname or not sym:
+            continue
+            
+        cname_norm = _normalize_text(cname)
+        # Strip common generic suffixes safely for mapping only
+        clean_name = re.sub(r'\b(ltd|limited|corp|corporation|co|company|inc)\b', '', cname_norm).strip()
+        
+        # If mapping already exists but maps to a DIFFERENT symbol, mark it AMBIGUOUS
+        if clean_name in exact_map and exact_map[clean_name] != sym:
+            exact_map[clean_name] = "AMBIGUOUS"
+        else:
+            exact_map[clean_name] = sym
+
+    # Tiny, hyper-curated absolute safe list of aliases
+    explicit_aliases = {
+        "tcs": "TCS",
+        "sbi": "SBIN",
+        "state bank of india": "SBIN",
+        "infy": "INFY",
+        "infosys": "INFY",
+        "hul": "HINDUNILVR",
+        "itc": "ITC",
+        "hdfc": "HDFCBANK", # Post-merger safety
+        "hdfc bank": "HDFCBANK",
+        "lic": "LICI",
+    }
+    
+    # Generic rejection list for extremely broad entities
+    rejection_list = {"tata", "adani", "reliance", "jio", "birla", "mahindra", "godrej", "bajaj", "airtel"}
+
+    for name in extracted_names:
+        # Validate that it is indeed a string. Sometimes models hallucinate dicts/lists.
+        if not isinstance(name, str):
+            continue
+            
+        name_clean = str(name).strip().lower()
+        if not name_clean:
+            continue
+            
+        name_norm = _normalize_text(name_clean)
+        clean_input = re.sub(r'\b(ltd|limited|corp|corporation|co|company|inc)\b', '', name_norm).strip()
+        
+        if not clean_input or clean_input in rejection_list:
+            continue
+            
+        # Check explicit alias
+        if clean_input in explicit_aliases:
+            valid_symbols.add(explicit_aliases[clean_input])
+            continue
+            
+        # Check strict DB exact matching
+        mapped_sym = exact_map.get(clean_input)
+        if mapped_sym and mapped_sym != "AMBIGUOUS":
+            valid_symbols.add(mapped_sym)
+            
+    return list(valid_symbols)
+
 # =========================================================
 # TOOL 2: GET STOCK CONTEXT (MERGED — KEY TOOL)
 # Replaces: get_stock_profile + get_price_timing + get_relative_performance
