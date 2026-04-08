@@ -1554,6 +1554,9 @@ async function fetchNews() {
         if (showOnlyAnalyzed) {
             url += `&analyzed_only=true`;
         }
+        if (searchQuery) {
+            url += `&search=${encodeURIComponent(searchQuery)}`;
+        }
 
         const res = await fetch(url);
         const json = await res.json();
@@ -1624,7 +1627,7 @@ searchInput.addEventListener('input', () => {
     searchDebounceTimer = setTimeout(() => {
         searchQuery = searchInput.value.trim();
         searchClear.style.display = searchQuery ? 'flex' : 'none';
-        renderNews(newsData);
+        fetchNews();
     }, SEARCH_DEBOUNCE);
 });
 
@@ -1632,7 +1635,7 @@ searchClear.addEventListener('click', () => {
     searchInput.value = '';
     searchQuery = '';
     searchClear.style.display = 'none';
-    renderNews(newsData);
+    fetchNews();
     searchInput.focus();
 });
 
