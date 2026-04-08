@@ -1502,7 +1502,13 @@ function renderNews(articles, prepend = false, append = false) {
     emptyState.style.display = 'none';
     newsGrid.style.display = 'grid';
 
-    // Handle Featured Articles (ONLY on the first page/initial load/refresh)
+    // Update article count
+    if (!prepend && !append) {
+        if (articleCount) articleCount.textContent = `${articles.length} article${articles.length !== 1 ? 's' : ''}`;
+        if (drawerCount) drawerCount.textContent = `${articles.length} article${articles.length !== 1 ? 's' : ''}`;
+    }
+
+    // Handle Featured Articles (ONLY on the first page/initial load/refresh when not searching)
     if (!prepend && !append && !searchQuery) {
         let regularArticles = [...articles];
         let featured = [];
@@ -1553,7 +1559,7 @@ function renderNews(articles, prepend = false, append = false) {
             newsGrid.appendChild(createNewsCard(article, index));
         });
     } else {
-        // Standard Prepended or Appended rendering
+        // Standard Prepended or Appended rendering (for load more and search results)
         articles.forEach((article, index) => {
             const card = createNewsCard(article, index);
             if (prepend) {
@@ -1691,6 +1697,9 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
         if (currentEventId) {
             url += `&event_id=${encodeURIComponent(currentEventId)}`;
         }
+        if (searchQuery) {
+            url += `&search=${encodeURIComponent(searchQuery)}`;
+        }
 
         const res = await fetch(url);
         const json = await res.json();
@@ -1800,7 +1809,10 @@ searchInput.addEventListener('input', () => {
     searchDebounceTimer = setTimeout(() => {
         searchQuery = searchInput.value.trim();
         searchClear.style.display = searchQuery ? 'flex' : 'none';
-        renderNews(newsData);
+        currentPage = 0; // Reset to first page for new search
+        hasMoreArticles = true;
+        seenArticleIds.clear();
+        fetchNews();
     }, SEARCH_DEBOUNCE);
 });
 
@@ -1808,7 +1820,10 @@ searchClear.addEventListener('click', () => {
     searchInput.value = '';
     searchQuery = '';
     searchClear.style.display = 'none';
-    renderNews(newsData);
+    currentPage = 0; // Reset to first page
+    hasMoreArticles = true;
+    seenArticleIds.clear();
+    fetchNews();
     searchInput.focus();
 });
 
