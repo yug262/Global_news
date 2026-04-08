@@ -34,7 +34,8 @@ def get_news(source: str = Query(None, description="Filter news by source name")
              relevance: str = Query(None, description="Filter news by relevance"),
              analyzed_only: bool = Query(False, description="Only fetch analyzed news"),
              event_id: str = Query(None, description="Filter news by exact event ID"),
-             offset: int = Query(0, description="Number of items to skip for pagination")):
+             offset: int = Query(0, description="Number of items to skip for pagination"),
+             search: str = Query(None, description="Search in title, description, and source")):
     """Get news articles, sorted by newest first."""
     
     query = """SELECT id, title, link, published, source, description, image_url,
@@ -66,6 +67,11 @@ def get_news(source: str = Query(None, description="Filter news by source name")
     if event_id:
         query += " AND event_id = %s"
         params.append(event_id)
+    
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query += " AND (LOWER(title) ILIKE %s OR LOWER(description) ILIKE %s OR LOWER(source) ILIKE %s)"
+        params.extend([search_term, search_term, search_term])
         
     query += " ORDER BY published DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
@@ -172,7 +178,8 @@ def get_indian_news(source: str = Query(None, description="Filter news by source
              relevance: str = Query(None, description="Filter news by relevance"),
              analyzed_only: bool = Query(False, description="Only fetch analyzed news"),
              event_id: str = Query(None, description="Filter news by exact event ID"),
-             offset: int = Query(0, description="Number of items to skip for pagination")):
+             offset: int = Query(0, description="Number of items to skip for pagination"),
+             search: str = Query(None, description="Search in title, description, and source")):
     """Get Indian news articles, sorted by newest first."""
     
     query = """SELECT id, title, link, published, source, description, image_url,
@@ -205,6 +212,11 @@ def get_indian_news(source: str = Query(None, description="Filter news by source
     if event_id:
         query += " AND event_id = %s"
         params.append(event_id)
+    
+    if search and search.strip():
+        search_term = f"%{search.strip()}%"
+        query += " AND (LOWER(title) ILIKE %s OR LOWER(description) ILIKE %s OR LOWER(source) ILIKE %s)"
+        params.extend([search_term, search_term, search_term])
         
     query += " ORDER BY published DESC LIMIT %s OFFSET %s"
     params.extend([limit, offset])
