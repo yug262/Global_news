@@ -20,5 +20,3 @@ playwright
 playwright-stealth
 ccxt
 yfinance
-websocket
-websocket-client

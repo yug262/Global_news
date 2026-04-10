@@ -1,5 +1,5 @@
 """
-Frontend Dev Server — Serves the Zentrade frontend on port 3000.
+Frontend Dev Server — Serves the Indian News Intelligence frontend on port 3000.
 Handles consistent /static/ routing for assets.
 """
 
@@ -12,8 +12,9 @@ from urllib.parse import urljoin
 import requests
 
 PORT = 3000
-# Assuming this script is run from the project root
-FRONTEND_DIR = os.path.join(os.getcwd(), "frontend")
+# Use absolute path relative to this script to avoid CWD issues
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(SCRIPT_DIR, "frontend")
 BACKEND_PROXY_URL = os.getenv("BACKEND_PROXY_URL", "http://localhost:8000")
 
 class FrontendHandler(http.server.SimpleHTTPRequestHandler):
@@ -80,10 +81,12 @@ class FrontendHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             return
             
-        if clean_path == "/":
-            self.path = "/index.html"
+        if clean_path == "/" or clean_path == "":
+            self.path = "index.html"
             
-        return super().do_GET()
+        response = super().do_GET()
+        # If the super call results in a 404, we can log the actual path attempted
+        return response
 
     def do_POST(self):
         if self.path.startswith("/api/"):
@@ -104,7 +107,7 @@ if __name__ == "__main__":
         allow_reuse_address = True
 
     with ThreadingHTTPServer(("", PORT), FrontendHandler) as httpd:
-        print(f"\n  🚀 Zentrade Frontend running on http://localhost:{PORT}")
+        print(f"\n  🚀 Indian News Intelligence Frontend running on http://localhost:{PORT}")
         print(f"  🔗 Backend API expected at:  http://localhost:8000")
         print(f"  --------------------------------------------------")
         print(f"  Page Routes:")

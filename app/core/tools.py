@@ -1,56 +1,118 @@
+# app/ind/tools.py
 """
-Global Macro Intelligence — Tools Layer
-Free data sources only.
+Indian Market Intelligence — Tools Layer V6
 
-Notes:
-- Uses yfinance, CoinGecko, Alternative.me, and your own DB
-- Adds:
-  - better title normalization
-  - theme detection
-  - repetition / fatigue scoring
-  - escalation detection
-  - duplicate / priced-in checks
+Changelog vs V4:
+- Merged get_stock_profile + get_price_timing + get_relative_performance → get_stock_context()
+  Single yfinance fetch per stock instead of 3 separate calls.
+- resolve_company() now caches the companies table at module init.
+- get_peer_reaction() limited to 3 peers, daily data only (15m was false precision).
+- All yfinance calls wrapped with explicit timeouts.
+- Removed dead map_companies_from_text, map_sectors_from_companies, build_agent_context.
+
+Tools in this file:
+ 1. resolve_company()          — NSE symbol mapping + alias table (CACHED)
+ 2. get_stock_context()        — Combined: profile + price timing + relative perf (KEY TOOL)
+ 3. get_peer_reaction()        — Peer stocks vs target (simplified)
+ 4. get_broad_market_snapshot() — Nifty/Sensex session
+ 5. get_source_credibility()   — Confidence cap + event classification
+ 6. get_market_status()        — Open/closed with holiday awareness
+ 7. classify_novelty()         — Expected vs surprise classifier
 """
+
 from __future__ import annotations
 
-from zoneinfo import ZoneInfo
-
 import re
-from datetime import datetime, time, timedelta, timezone
+import threading
+from datetime import date, datetime, time, timedelta, timezone
 from difflib import SequenceMatcher
 from typing import Any
+from zoneinfo import ZoneInfo
+
+import yfinance as yf
 
 import requests
-import yfinance as yf
-from bs4 import BeautifulSoup
 import ccxt
 import pandas as pd
-
 from app.core.db import fetch_all
 
 
-COINGECKO_URL = "https://api.coingecko.com/api/v3"
-FEAR_GREED_URL = "https://api.alternative.me/fng/"
+# =========================================================
+# CONSTANTS
+# =========================================================
 
-DEFAULT_TIMEOUT = 10
+IST = ZoneInfo("Asia/Kolkata")
+
+INDIAN_INDEX_SYMBOLS = {
+    "NIFTY 50":         "^NSEI",
+    "SENSEX":           "^BSESN",
+    "BANKNIFTY":        "^NSEBANK",
+    "NIFTY BANK":       "^NSEBANK",
+}
+
+MARKET_CAP_BUCKETS = {
+    "large_cap": "> ₹20,000 Cr",
+    "mid_cap":   "₹5,000–20,000 Cr",
+    "small_cap": "< ₹5,000 Cr",
+    "unknown":   "unavailable",
+}
+
+NSE_HOLIDAYS_2026: set[date] = {
+    date(2026, 1, 26), date(2026, 2, 26), date(2026, 3, 20),
+    date(2026, 3, 26), date(2026, 4, 3), date(2026, 4, 14),
+    date(2026, 8, 15), date(2026, 8, 27), date(2026, 10, 2),
+    date(2026, 10, 21), date(2026, 10, 22), date(2026, 11, 5),
+    date(2026, 12, 25),
+}
+
+NSE_MUHURAT_DATES_2026: set[date] = {date(2026, 10, 21)}
+
+
+
 
 
 # =========================================================
-# HTTP HELPERS
+# SECTOR → DB keywords (for peer lookup)
+# =========================================================
+SECTOR_DB_KEYWORDS: dict[str, list[str]] = {
+    "banking": ["bank", "banking"],
+    "financial_services": ["financial services", "nbfc", "insurance", "asset management",
+                           "housing finance", "wealth management"],
+    "it": ["software", "information technology", "it services", "computer", "data processing"],
+    "pharma": ["pharma", "pharmaceutical", "drug", "healthcare", "hospital", "diagnostic",
+               "biotechnology"],
+    "auto": ["automobile", "auto ancillaries", "vehicle", "two wheeler", "commercial vehicle"],
+    "oil_gas": ["oil", "gas", "petroleum", "refinery", "crude", "petrochemical"],
+    "power": ["power", "electricity", "utility", "transmission", "solar", "wind energy",
+              "renewable energy"],
+    "metals": ["steel", "metal", "aluminium", "copper", "zinc", "iron ore", "mining"],
+    "capital_goods": ["capital goods", "industrial machinery", "heavy engineering"],
+    "railways": ["railway", "rolling stock", "wagon", "locomotive"],
+    "defence": ["defence", "defense", "aerospace", "ordnance"],
+    "realty": ["real estate", "realty", "property developer"],
+    "infrastructure": ["infrastructure", "road", "highway", "port", "airport"],
+    "fmcg": ["consumer goods", "fmcg", "packaged food", "personal care", "beverages"],
+    "telecom": ["telecom", "telecommunication", "mobile services"],
+    "chemicals": ["chemical", "agrochemical", "specialty chemical", "fertiliser"],
+}
+
+
+# =========================================================
+# HELPERS
 # =========================================================
 
-def _http_get(url: str, params: dict | None = None, headers: dict | None = None, timeout: int = DEFAULT_TIMEOUT):
+def _safe_float(value: Any) -> float | None:
     try:
-        r = requests.get(url, params=params, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        return r
+        if value is None or value == "":
+            return None
+        return float(value)
     except Exception:
         return None
 
 
-# =========================================================
-# GENERIC HELPERS
-# =========================================================
+def _now_ist() -> datetime:
+    return datetime.now(IST)
+
 
 def _to_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
@@ -58,1112 +120,709 @@ def _to_utc(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def _safe_float(value: Any) -> float | None:
-    try:
-        return float(value)
-    except Exception:
-        return None
-
-
-def _clamp(value: float, min_value: float, max_value: float) -> float:
-    return max(min_value, min(max_value, value))
-
-
-# =========================================================
-# TITLE / EVENT UNDERSTANDING
-# =========================================================
-
-# Pre-compiled regexes for hot-loop performance
-_RE_NUMBERS = re.compile(r"\d+(?:\.\d+)?")
-_RE_PUNCTUATION = re.compile(r"[^a-z0-9\s<>]")
-_RE_WHITESPACE = re.compile(r"\s+")
-_RE_PCT = re.compile(r'(\d+(\.\d+)?)\s*%')
-
-
-def _normalize_event_title(title: str) -> str:
-    """
-    Strong normalization for title similarity matching.
-    """
-    t = (title or "").lower().strip()
-
-    # Standardize common market text
-    t = t.replace("u.s.", "us").replace("u.s", "us")
-    t = t.replace("%", " percent ").replace("&", " and ")
-
-    # Fast substring replacements
-    t = _RE_NUMBERS.sub(" <num> ", t)
-    t = _RE_PUNCTUATION.sub(" ", t)
-    t = _RE_WHITESPACE.sub(" ", t).strip()
+def _normalize_text(text: str) -> str:
+    t = (text or "").lower().strip()
+    t = t.replace("&", " and ").replace("%", " percent ")
+    t = re.sub(r"[^a-z0-9\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
     return t
 
 
-def detect_theme(title: str) -> str:
-    """
-    Lightweight theme classifier for repetition detection.
-    """
-    t = (title or "").lower()
-
-    if any(x in t for x in [
-        "nonfarm payroll", "payrolls", "jobs report", "job losses",
-        "unemployment rate", "labor market", "employment data",
-        "jobless claims", "employment growth"
-    ]):
-        return "us_labor_market"
-
-    if any(x in t for x in [
-        "cpi", "inflation", "consumer price index", "ppi",
-        "core inflation", "price pressures", "disinflation"
-    ]):
-        return "us_inflation"
-
-    if any(x in t for x in [
-        "fed", "fomc", "powell", "rate cut", "rate hike",
-        "raises rates", "cuts rates", "monetary policy",
-        "federal reserve"
-    ]):
-        return "fed_policy"
-
-    if any(x in t for x in [
-        "ecb", "boe", "boj", "snb", "lagarde", "bailey", "ueda"
-    ]):
-        return "other_central_bank_policy"
-
-    if any(x in t for x in [
-        "gdp", "retail sales", "industrial production",
-        "pmi", "ism", "durable goods", "consumer confidence"
-    ]):
-        return "macro_growth_data"
-
-    if any(x in t for x in [
-        "oil", "opec", "crude", "brent", "wti", "supply disruption",
-        "production cut", "refinery", "energy market"
-    ]):
-        return "oil_market"
-
-    if any(x in t for x in [
-        "bitcoin etf", "spot etf", "ethereum etf", "sec",
-        "crypto regulation", "digital asset regulation"
-    ]):
-        return "crypto_regulation_etf"
-
-    if any(x in t for x in [
-        "tariff", "sanctions", "trade war", "import duty", "export controls"
-    ]):
-        return "trade_policy"
-
-    if any(x in t for x in [
-        "missile", "attack", "strike", "airstrike", "ceasefire",
-        "troops", "military", "explosion", "conflict", "war"
-    ]):
-        return "geopolitical_conflict"
-
-    return "general"
+def _normalize_nse_symbol(symbol: str) -> str:
+    s = (symbol or "").strip().upper()
+    if not s:
+        return s
+    if s.startswith("^") or s.endswith(".NS") or s.endswith(".BO"):
+        return s
+    return f"{s}.NS"
 
 
-def has_escalation_words(title: str) -> bool:
-    """
-    Strict escalation detector for filter use.
-    Only flags genuinely event-like escalation words.
-    """
-    t = (title or "").lower()
-
-    escalation_words = [
-        "sanctions",
-        "tariffs",
-        "export ban",
-        "capital controls",
-        "intervention",
-        "rate hike",
-        "rate cut",
-        "emergency meeting",
-        "bankruptcy",
-        "default",
-        "shipping halted",
-        "waterway closed",
-        "strait closed",
-        "pipeline attack",
-        "refinery attack",
-        "missile strike",
-        "new front",
-        "new country joins",
-        "exchange halt",
-        "stablecoin depeg",
-    ]
-
-    return any(word in t for word in escalation_words)
+def _normalize_for_yf(symbol: str) -> str:
+    s = (symbol or "").strip()
+    if not s:
+        return s
+    if s in INDIAN_INDEX_SYMBOLS:
+        return INDIAN_INDEX_SYMBOLS[s]
+    if s.startswith("^") or s.endswith(".NS") or s.endswith(".BO"):
+        return s
+    return _normalize_nse_symbol(s)
 
 
-def detect_reaction_headline(title: str) -> dict:
-    """
-    Detect whether a headline is primarily describing market price action.
-    """
-    t = (title or "").lower().strip()
-
-    move_verbs = [
-        "rises", "rise", "falls", "fall", "drops", "drop", "jumps", "jump",
-        "surges", "surge", "slides", "slide", "rebounds", "rebound",
-        "tumbles", "tumble", "gains", "gain", "selloff", "sells off",
-        "rallies", "rally", "slips", "slip"
-    ]
-
-    catalyst_words = [
-        "after", "amid", "on", "as", "following", "due to", "because of"
-    ]
-
-    pct_match = _RE_PCT.search(t)
-    headline_move_pct = float(pct_match.group(1)) if pct_match else None
-
-    has_move_verb = any(v in t for v in move_verbs)
-    has_catalyst = any(w in t for w in catalyst_words)
-
-    # Much broader than before
-    reaction_headline = bool(
-        has_move_verb and (
-            headline_move_pct is not None
-            or has_catalyst
-            or t.startswith(("oil ", "gold ", "bitcoin ", "stocks ", "dollar ", "usd/", "eur/", "gbp/", "spx", "nasdaq"))
-        )
-    )
-
-    return {
-        "reaction_headline": reaction_headline,
-        "headline_move_pct": headline_move_pct,
-        "has_new_catalyst": has_catalyst,
-    }
-
-
-# =========================================================
-# REACTION / PRICED-IN HELPERS
-# =========================================================
-
-def classify_reaction_status(reaction_pct: float | None, atr_pct_reference: float | None) -> str:
-    """
-    Compare move vs ATR to label priced-in state.
-    """
-    if reaction_pct is None:
-        return "unknown"
-
-    if atr_pct_reference is None or atr_pct_reference <= 0:
-        return "normal_reaction"
-
-    ratio = abs(reaction_pct) / atr_pct_reference
-
-    if ratio < 0.3:
-        return "underreacted"
-    if ratio < 1.0:
-        return "normal_reaction"
-    return "fully_priced"
-
-
-def get_time_decay_penalty(published_at: datetime | None) -> int:
-    if not published_at:
-        return 0
-
-    age_hours = (datetime.now(timezone.utc) - _to_utc(published_at)).total_seconds() / 3600.0
-
-    if age_hours < 0.5:
-        return 0
-    if age_hours < 2:
-        return 1
-    if age_hours < 8:
-        return 2
-    return 3
-
-
-def _safe_last_close(symbol: str) -> float | None:
+def _safe_history(symbol: str, period: str = "5d", interval: str = "1d"):
     try:
-        t = yf.Ticker(symbol)
-        h = t.history(period="5d")
-        if h is None or h.empty:
-            return None
-        return float(h["Close"].iloc[-1])
+        return yf.Ticker(symbol).history(period=period, interval=interval)
     except Exception:
         return None
 
 
-def _is_crypto(symbol: str) -> bool:
-    s = (symbol or "").upper()
-    return "-USD" in s or s in ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE"]
+def _parse_published_iso(published_iso: str) -> datetime | None:
+    try:
+        ts = (published_iso or "").strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        return _to_utc(dt)
+    except Exception:
+        return None
 
-def _crypto_to_binance(symbol: str) -> str:
-    base = symbol.split("-")[0].upper()
-    if base == "USD": return "USDC/USDT"
-    return f"{base}/USDT"
 
-def get_asset_atr(symbol: str, period: int = 14) -> dict:
-    if _is_crypto(symbol):
+def _pct_change(start: float, end: float) -> float | None:
+    if not start:
+        return None
+    return round(((end - start) / start) * 100, 3)
+
+
+def _canonicalize_sector(label: str) -> str:
+    x = _normalize_text(label)
+    if not x:
+        return ""
+    # Check in priority order to avoid cross-matches
+    if any(k in x for k in ["telecom", "telecommunication", "mobile services"]):
+        return "telecom"
+    if any(k in x for k in ["railway", "rolling stock", "wagon", "locomotive"]):
+        return "railways"
+    if any(k in x for k in ["defence", "defense", "aerospace", "ordnance"]):
+        return "defence"
+    if any(k in x for k in ["capital goods", "industrial machinery", "heavy engineering"]):
+        return "capital_goods"
+    if any(k in x for k in ["bank", "banking"]):
+        return "banking"
+    if any(k in x for k in ["financial services", "nbfc", "insurance", "asset management",
+                              "housing finance", "wealth management"]):
+        return "financial_services"
+    if any(k in x for k in ["software", "information technology", "it services",
+                              "data processing", "computer"]):
+        return "it"
+    if any(k in x for k in ["pharma", "pharmaceutical", "drug", "healthcare",
+                              "hospital", "diagnostic", "biotechnology"]):
+        return "pharma"
+    if any(k in x for k in ["automobile", "auto ancillaries", "vehicle",
+                              "two wheeler", "commercial vehicle"]):
+        return "auto"
+    if any(k in x for k in ["oil", "gas", "petroleum", "refinery", "crude", "petrochemical"]):
+        return "oil_gas"
+    if any(k in x for k in ["power", "electricity", "utility", "transmission",
+                              "solar", "wind energy", "renewable energy"]):
+        return "power"
+    if any(k in x for k in ["steel", "metal", "aluminium", "copper", "zinc",
+                              "iron ore", "mining"]):
+        return "metals"
+    if any(k in x for k in ["chemical", "agrochemical", "specialty chemical", "fertiliser"]):
+        return "chemicals"
+    if any(k in x for k in ["real estate", "realty", "property developer"]):
+        return "realty"
+    if any(k in x for k in ["infrastructure", "road", "highway", "port", "airport"]):
+        return "infrastructure"
+    if any(k in x for k in ["consumer goods", "fmcg", "packaged food", "personal care", "beverages"]):
+        return "fmcg"
+    return ""
+
+
+# =========================================================
+# TOOL 1: RESOLVE COMPANY (CACHED)
+# =========================================================
+
+_COMPANIES_CACHE: list[dict] | None = None
+_COMPANIES_CACHE_LOCK = threading.Lock()
+
+
+def _get_companies_list() -> list[dict]:
+    """Load companies table once, cache in memory. Fetches from both companies and nse_companies."""
+    global _COMPANIES_CACHE
+    if _COMPANIES_CACHE is not None:
+        return _COMPANIES_CACHE
+    with _COMPANIES_CACHE_LOCK:
+        if _COMPANIES_CACHE is not None:
+            return _COMPANIES_CACHE
         try:
-            binance_sym = _crypto_to_binance(symbol)
-            exchange = ccxt.binance()
-            ohlcv = exchange.fetch_ohlcv(binance_sym, timeframe='1d', limit=40)
-            if ohlcv and len(ohlcv) >= period:
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-                df["H-L"] = df["High"] - df["Low"]
-                df["H-PC"] = (df["High"] - df["Close"].shift(1)).abs()
-                df["L-PC"] = (df["Low"] - df["Close"].shift(1)).abs()
-                
-                tr = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-                atr = tr.rolling(period).mean().iloc[-1]
-                price = df["Close"].iloc[-1]
-                
-                if price != 0:
-                    return {
-                        "atr_value": round(float(atr), 6),
-                        "atr_pct_reference": round(float((atr / price) * 100), 6),
-                    }
-        except Exception:
-            pass # Fallback to yfinance if error
-
-    try:
-        t = yf.Ticker(symbol)
-        df = t.history(period="30d")
-        if df is None or df.empty or len(df) < period:
-            return {}
-
-        df["H-L"] = df["High"] - df["Low"]
-        df["H-PC"] = (df["High"] - df["Close"].shift(1)).abs()
-        df["L-PC"] = (df["Low"] - df["Close"].shift(1)).abs()
-
-        tr = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-        atr = tr.rolling(period).mean().iloc[-1]
-        price = df["Close"].iloc[-1]
-
-        if price == 0:
-            return {}
-
-        atr_pct = (atr / price) * 100
-
-        return {
-            "atr_value": round(float(atr), 6),
-            "atr_pct_reference": round(float(atr_pct), 6),
-        }
-    except Exception:
-        return {}
+            combined_rows = []
+            
+            # Fetch from companies table
+            rows1 = fetch_all(
+                "SELECT company_name, nse_symbol FROM companies "
+                "WHERE nse_symbol IS NOT NULL AND TRIM(nse_symbol) <> ''"
+            ) or []
+            combined_rows.extend(rows1)
+            
+            # Fetch from nse_companies table
+            rows2 = fetch_all(
+                "SELECT company_name, symbol as nse_symbol FROM nse_companies "
+                "WHERE symbol IS NOT NULL AND TRIM(symbol) <> ''"
+            ) or []
+            combined_rows.extend(rows2)
+            
+            _COMPANIES_CACHE = combined_rows
+        except Exception as e:
+            _COMPANIES_CACHE = []
+    return _COMPANIES_CACHE
 
 
-def calculate_reaction(symbol: str, published_iso: str) -> dict:
+def resolve_company(name: str) -> dict:
     """
-    Calculates move from first available candle at/after publish time to now.
-    Falls back to daily if intraday unavailable.
+    Look up an Indian listed company by name → NSE symbol.
+    Uses cached DB with fuzzy matching.
     """
-    try:
-        pub_dt = datetime.fromisoformat((published_iso or "").strip())
-        pub_dt = _to_utc(pub_dt)
-        now_dt = datetime.now(timezone.utc)
+    if not name or not str(name).strip():
+        return {"input_name": name, "status": "unresolved", "symbol": None, "company_name": ""}
 
-        if _is_crypto(symbol):
-            try:
-                binance_sym = _crypto_to_binance(symbol)
-                exchange = ccxt.binance()
-                since_ts = int((pub_dt - timedelta(hours=6)).timestamp() * 1000)
-                ohlcv = exchange.fetch_ohlcv(binance_sym, timeframe='15m', since=since_ts, limit=1000)
-                
-                if ohlcv:
-                    df = pd.DataFrame(ohlcv, columns=['timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-                    df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
-                    after = df[df['datetime'] >= pub_dt]
-                    
-                    if not after.empty:
-                        news_price = float(after["Close"].iloc[0])
-                        used_ts = after['datetime'].iloc[0]
-                        current_price = float(df["Close"].iloc[-1])
-                        reaction_pct = ((current_price - news_price) / news_price) * 100 if news_price else None
-                        
-                        return {
-                            "news_price": round(news_price, 6),
-                            "current_price": round(current_price, 6),
-                            "reaction_pct": round(reaction_pct, 6) if reaction_pct is not None else None,
-                            "method": "ccxt_intraday_15m",
-                            "used_timestamp_utc": used_ts.isoformat(),
-                        }
-            except Exception:
-                pass # Fallback to yfinance if ccxt fails
+    name_norm = _normalize_text(name)
 
-        t = yf.Ticker(symbol)
+    # Cached DB lookup
+    rows = _get_companies_list()
+    best_match = None
+    highest_ratio = 0.0
 
-        # 1) Try intraday 15m
-        start = pub_dt - timedelta(hours=6)
-        end = now_dt + timedelta(minutes=5)
+    for row in rows:
+        company_name = (row.get("company_name") or "").strip()
+        symbol = (row.get("nse_symbol") or "").strip().upper()
+        if not company_name or not symbol:
+            continue
 
-        df = t.history(start=start, end=end, interval="15m")
-        if df is not None and not df.empty:
-            if getattr(df.index, "tz", None) is None:
-                df.index = df.index.tz_localize(timezone.utc)
-            else:
-                df.index = df.index.tz_convert(timezone.utc)
+        cname_norm = _normalize_text(company_name)
+        # Exact match
+        if name_norm == cname_norm or name_norm == symbol.lower():
+            return {"input_name": name, "symbol": symbol, "company_name": company_name, "status": "resolved"}
 
-            after = df[df.index >= pub_dt]
-            if not after.empty:
-                news_price = float(after["Close"].iloc[0])
-                used_ts = after.index[0]
-                current_price = float(df["Close"].iloc[-1])
-                reaction_pct = ((current_price - news_price) / news_price) * 100 if news_price else None
+        # Substring exact match for broad mapping (like "jio" in "reliance jio")
+        if len(name_norm) > 3 and (name_norm in cname_norm or cname_norm in name_norm):
+            ratio = 0.90  # High confidence if one is a substring of the other
+        else:
+            ratio = SequenceMatcher(None, name_norm, cname_norm).ratio()
+            
+        if ratio > 0.82 and ratio > highest_ratio:
+            highest_ratio = ratio
+            best_match = {"input_name": name, "symbol": symbol, "company_name": company_name, "status": "resolved"}
 
-                return {
-                    "news_price": round(news_price, 6),
-                    "current_price": round(current_price, 6),
-                    "reaction_pct": round(reaction_pct, 6) if reaction_pct is not None else None,
-                    "method": "intraday_15m",
-                    "used_timestamp_utc": used_ts.isoformat(),
-                }
+    if best_match:
+        return best_match
 
-        # 2) Daily fallback
-        df_d = t.history(period="30d", interval="1d")
-        if df_d is not None and not df_d.empty:
-            idx = df_d.index
-            if getattr(idx, "tz", None) is None:
-                pub_date = pub_dt.date()
-                row = df_d[df_d.index.date >= pub_date]
-                if not row.empty:
-                    news_price = float(row["Close"].iloc[0])
-                    used_ts = row.index[0]
-                else:
-                    news_price = float(df_d["Close"].iloc[-1])
-                    used_ts = df_d.index[-1]
-            else:
-                df_d.index = df_d.index.tz_convert(timezone.utc)
-                row = df_d[df_d.index >= pub_dt]
-                if not row.empty:
-                    news_price = float(row["Close"].iloc[0])
-                    used_ts = row.index[0]
-                else:
-                    news_price = float(df_d["Close"].iloc[-1])
-                    used_ts = df_d.index[-1]
-
-            current_price = float(df_d["Close"].iloc[-1])
-            reaction_pct = ((current_price - news_price) / news_price) * 100 if news_price else None
-
-            return {
-                "news_price": round(news_price, 6),
-                "current_price": round(current_price, 6),
-                "reaction_pct": round(reaction_pct, 6) if reaction_pct is not None else None,
-                "method": "daily",
-                "used_timestamp_utc": used_ts.isoformat() if hasattr(used_ts, "isoformat") else str(used_ts),
-            }
-
-        # 3) Last close fallback
-        current_price = _safe_last_close(symbol)
-        if current_price is not None:
-            return {
-                "news_price": None,
-                "current_price": round(current_price, 6),
-                "reaction_pct": None,
-                "method": "last_close",
-                "used_timestamp_utc": None,
-            }
-
-        return {"method": "failed"}
-
-    except Exception as e:
-        return {"method": "failed", "error": str(e)}
+    return {"input_name": name, "status": "unresolved", "symbol": None, "company_name": ""}
 
 
-# =========================================================
-# FOREX / CRYPTO / GLOBAL MARKET TOOLS
-# =========================================================
-
-def get_forex_prices(pairs: list[str]) -> dict:
-    symbol_map = {
-        "DXY": "DX-Y.NYB",
-        "GOLD": "GC=F",
-        "OIL": "CL=F",
-        "SILVER": "SI=F",
-    }
-
-    out = {}
-    for pair in pairs:
-        symbol = symbol_map.get(pair.upper(), pair.replace("/", "").upper() + "=X")
-        out[pair] = _safe_last_close(symbol)
-    return out
-
-
-def get_crypto_prices(coin_ids: list[str] | None = None) -> dict:
-    if not coin_ids:
-        coin_ids = ["bitcoin", "ethereum"]
-
-    cg_to_binance = {
-        "bitcoin": "BTC/USDT",
-        "ethereum": "ETH/USDT",
-        "solana": "SOL/USDT",
-        "ripple": "XRP/USDT",
-        "cardano": "ADA/USDT",
-        "dogecoin": "DOGE/USDT",
-        "avalanche-2": "AVAX/USDT",
-        "chainlink": "LINK/USDT",
-        "polkadot": "DOT/USDT",
-        "litecoin": "LTC/USDT",
-        "shiba-inu": "SHIB/USDT",
-        "polygon": "MATIC/USDT",
-        "matic-network": "MATIC/USDT",
-        "uniswap": "UNI/USDT"
-    }
-
-    try:
-        exchange = ccxt.binance()
-        to_fetch = []
-        for cid in coin_ids:
-            sym = cg_to_binance.get(cid.lower())
-            if not sym and ("usd" in cid.lower() or "usdt" in cid.lower()):
-                sym = cid.upper().replace("-USD", "/USDT").replace("-", "/")
-            if sym:
-                to_fetch.append(sym)
-                
-        to_fetch = list(set(to_fetch))
-        out = {}
-        if to_fetch:
-            tickers = exchange.fetch_tickers(to_fetch)
-            for cid in coin_ids:
-                sym = cg_to_binance.get(cid.lower())
-                if not sym:
-                    sym = cid.upper().replace("-USD", "/USDT").replace("-", "/")
-                
-                if sym in tickers and tickers[sym]['last'] is not None:
-                    out[cid] = float(tickers[sym]['last'])
-                else:
-                    out[cid] = None
-        return out
-    except Exception as e:
-        print(f"ccxt get_crypto_prices error: {e}")
-    return {}
-
-
-def get_global_markets() -> dict:
-    symbols = {
-        "SPX": "^GSPC",
-        "NASDAQ": "^IXIC",
-        "DOW": "^DJI",
-        "VIX": "^VIX",
-        "US10Y": "^TNX",
-        "GOLD": "GC=F",
-        "OIL": "CL=F",
-        "DXY": "DX-Y.NYB",
-    }
-
-    out = {}
-    for name, sym in symbols.items():
-        out[name] = _safe_last_close(sym)
-    return out
-
-
-def get_market_sentiment() -> dict:
-    resp = _http_get(FEAR_GREED_URL)
-    if resp is None:
-        return {}
-
-    try:
-        data = resp.json()["data"][0]
-        return {
-            "fear_greed_value": int(data["value"]),
-            "fear_greed_classification": data["value_classification"],
-        }
-    except Exception:
-        return {}
-
-
-def get_macro_context() -> dict:
-    try:
-        dxy = yf.Ticker("DX-Y.NYB").history(period="5d")["Close"]
-        us10y = yf.Ticker("^TNX").history(period="5d")["Close"]
-
-        if dxy.empty or us10y.empty:
-            return {}
-
-        return {
-            "dxy_trend_5d_pct": round(float(dxy.pct_change().sum() * 100), 2),
-            "us10y_trend_5d_pct": round(float(us10y.pct_change().sum() * 100), 2),
-        }
-    except Exception:
-        return {}
-
-
-# =========================================================
-# ECONOMIC CALENDAR
-# =========================================================
-
-def get_economic_calendar() -> dict:
+def strict_resolve_symbols(extracted_names: list[str]) -> list[str]:
     """
-    Scrapes Investing.com economic calendar for high-impact events.
-    This may break if their HTML changes.
+    Strictly maps an array of literal company names to NSE symbols. NO fuzzy matching.
+    Drops known group names (Tata, Adani, Reliance) unless exact mapped.
+    Drops any name that maps to multiple distinct entities.
     """
-    try:
-        resp = _http_get(
-            "https://www.investing.com/economic-calendar/",
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        if resp is None:
-            return {"error": "request_failed"}
+    if not extracted_names:
+        return []
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        events = []
+    valid_symbols = set()
+    companies = _get_companies_list()
 
-        rows = soup.select("tr.js-event-item")
-        for row in rows[:20]:
-            try:
-                event_el = row.select_one(".event")
-                country_el = row.select_one(".flagCur")
-                time_el = row.select_one(".time")
-
-                if not event_el or not country_el or not time_el:
-                    continue
-
-                impact_icons = row.select(".sentiment i.grayFullBullishIcon")
-                impact = len(impact_icons)
-
-                events.append({
-                    "country": country_el.text.strip(),
-                    "event": event_el.text.strip(),
-                    "impact_level": impact,
-                    "time": time_el.text.strip(),
-                })
-            except Exception:
-                continue
-
-        return {
-            "events_found": len(events),
-            "events": events,
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# =========================================================
-# RATE DIFFERENTIALS
-# =========================================================
-
-def get_interest_rate_differentials() -> dict:
-    """
-    Safe minimal version. Add more yields only if source is reliable.
-    """
-    try:
-        us10y = _safe_last_close("^TNX")
-        return {
-            "us_10y": us10y,
-            "note": "Only US10Y included by default. Add more sovereign yields only from reliable sources.",
-        }
-    except Exception:
-        return {}
-
-
-# =========================================================
-# SOURCE CREDIBILITY
-# =========================================================
-
-def get_news_source_credibility(source: str) -> dict:
-    tier1 = ["reuters", "bloomberg", "wsj", "financial times", "ft.com", "ap", "cnbc-tv18"]
-    tier2 = ["cnbc", "marketwatch", "coindesk", "the block", "theblock", "fxstreet", "investing.com", "forexlive"]
-
-    s = (source or "").lower()
-
-    if any(x in s for x in tier1):
-        return {"credibility": "High"}
-    if any(x in s for x in tier2):
-        return {"credibility": "Medium"}
-    return {"credibility": "Unknown"}
-
-
-# =========================================================
-# DUPLICATE / PRICED-IN / FATIGUE CHECKS
-# =========================================================
-
-def search_recent_news(
-    title: str,
-    current_news_id: int | None = None,
-    hours_back: int = 48,
-    similarity_threshold: float = 0.86
-) -> dict:
-    """
-    Best-match duplicate / priced-in check for filter/analysis agents.
-    Excludes the current row if current_news_id is provided.
-    """
-    try:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours_back)
-
-        rows = fetch_all(
-            """
-            SELECT id, title, published
-            FROM news
-            WHERE published >= %s
-            ORDER BY published DESC
-            LIMIT 400
-            """,
-            (since,),
-        )
-
-        best = {"score": 0.0, "title": None, "published": None}
+    # Pre-compute exact mapping for incoming entities
+    exact_map = {}
+    for row in companies:
+        cname = (row.get("company_name") or "").strip()
+        sym = (row.get("nse_symbol") or "").strip().upper()
+        if not cname or not sym:
+            continue
+            
+        cname_norm = _normalize_text(cname)
+        # Strip common generic suffixes safely for mapping only
+        clean_name = re.sub(r'\b(ltd|limited|corp|corporation|co|company|inc)\b', '', cname_norm).strip()
         
-        # Pre-normalize the incoming title ONCE
-        title_norm = _normalize_event_title(title)
+        # If mapping already exists but maps to a DIFFERENT symbol, mark it AMBIGUOUS
+        if clean_name in exact_map and exact_map[clean_name] != sym:
+            exact_map[clean_name] = "AMBIGUOUS"
+        else:
+            exact_map[clean_name] = sym
 
-        for row in rows:
-            row_id = row.get("id")
-            if current_news_id is not None and row_id == current_news_id:
-                continue
-
-            other_title_raw = row.get("title") or ""
-            other_title_norm = _normalize_event_title(other_title_raw)
-            score = _headline_similarity_score(title_norm, other_title_norm)
-
-            if score > best["score"]:
-                best = {
-                    "score": score,
-                    "title": other_title_raw,
-                    "published": row.get("published"),
-                }
-
-        if best["title"] is None:
-            return {
-                "priced_in": False,
-                "match_score": 0.0,
-                "matched_title": None,
-                "matched_hours_ago": None,
-            }
-
-        older_than_hrs = None
-        if best["published"]:
-            older_than_hrs = (
-                datetime.now(timezone.utc) - _to_utc(best["published"])
-            ).total_seconds() / 3600.0
-
-        priced_in = bool(
-            best["score"] >= similarity_threshold
-            and older_than_hrs is not None
-            and older_than_hrs >= 4
-        )
-
-        return {
-            "priced_in": priced_in,
-            "match_score": round(best["score"], 3),
-            "matched_title": best["title"],
-            "matched_hours_ago": round(older_than_hrs, 2) if older_than_hrs is not None else None,
-        }
-
-    except Exception as e:
-        return {
-            "priced_in": False,
-            "match_score": 0.0,
-            "matched_title": None,
-            "matched_hours_ago": None,
-            "note": f"db_check_failed: {e}",
-        }
-
-
-def get_similar_news_counts(title: str, current_news_id: int | None = None) -> dict:
-    """
-    Count short-term repetition for strict filtering.
-    Returns both near-duplicate repetition and broad-theme repetition.
-    """
-    try:
-        rows = fetch_all(
-            """
-            SELECT id, title, published
-            FROM news
-            WHERE published > NOW() - INTERVAL '24 hours'
-            """
-        )
-
-        now = datetime.now(timezone.utc)
-        base_theme = detect_theme(title)
-        
-        # Pre-normalize the incoming title ONCE
-        title_norm = _normalize_event_title(title)
-
-        similar_6h = 0
-        similar_12h = 0
-        similar_24h = 0
-        theme_6h = 0
-        theme_12h = 0
-        theme_24h = 0
-
-        for row in rows:
-            row_id = row.get("id")
-            other_title_raw = row.get("title", "")
-            published = row.get("published")
-
-            if current_news_id is not None and row_id == current_news_id:
-                continue
-
-            if not published:
-                continue
-
-            published_utc = _to_utc(published)
-            age_seconds = (now - published_utc).total_seconds()
-            if age_seconds < 0:
-                continue
-
-            other_title_norm = _normalize_event_title(other_title_raw)
-            sim_score = _headline_similarity_score(title_norm, other_title_norm)
-            other_theme = detect_theme(other_title_raw)
-
-            if sim_score >= 0.84:
-                similar_24h += 1
-                if age_seconds <= 12 * 3600:
-                    similar_12h += 1
-                if age_seconds <= 6 * 3600:
-                    similar_6h += 1
-            elif sim_score >= 0.74 and base_theme != "general" and other_theme == base_theme:
-                similar_24h += 1
-                if age_seconds <= 12 * 3600:
-                    similar_12h += 1
-                if age_seconds <= 6 * 3600:
-                    similar_6h += 1
-
-            if base_theme != "general" and other_theme == base_theme:
-                theme_24h += 1
-                if age_seconds <= 12 * 3600:
-                    theme_12h += 1
-                if age_seconds <= 6 * 3600:
-                    theme_6h += 1
-
-        duplicate_score = min(1.0, (similar_6h * 0.40) + (similar_12h * 0.22) + (similar_24h * 0.08))
-        theme_score = min(1.0, (theme_6h * 0.18) + (theme_12h * 0.10) + (theme_24h * 0.04))
-        repetition_pressure = min(1.0, duplicate_score * 0.7 + theme_score * 0.3)
-
-        return {
-            "similar_news_6h": similar_6h,
-            "similar_news_12h": similar_12h,
-            "similar_news_24h": similar_24h,
-            "theme_news_6h": theme_6h,
-            "theme_news_12h": theme_12h,
-            "theme_news_24h": theme_24h,
-            "duplicate_score": round(duplicate_score, 3),
-            "theme_score": round(theme_score, 3),
-            "repetition_pressure": round(repetition_pressure, 3),
-            "theme": base_theme,
-        }
-
-    except Exception:
-        return {
-            "similar_news_6h": 0,
-            "similar_news_12h": 0,
-            "similar_news_24h": 0,
-            "theme_news_6h": 0,
-            "theme_news_12h": 0,
-            "theme_news_24h": 0,
-            "duplicate_score": 0.0,
-            "theme_score": 0.0,
-            "repetition_pressure": 0.0,
-            "theme": "general",
-        }
-
-
-def compute_fatigue_score(
-    similar_6h: int,
-    similar_12h: int,
-    similar_24h: int,
-    theme_6h: int,
-    theme_12h: int,
-    theme_24h: int,
-    repetition_pressure: float = 0.0,
-) -> int:
-    """
-    Weighted fatigue score from 0 to 10 for news filter use.
-    """
-    score = 0
-
-    score += min(similar_6h * 3, 5)
-    score += min(similar_12h, 2)
-    score += min(similar_24h, 1)
-    score += min(theme_6h, 1)
-    score += min(theme_12h, 1)
-
-    if repetition_pressure >= 0.85:
-        score += 2
-    elif repetition_pressure >= 0.65:
-        score += 1
-
-    return min(score, 10)
-
-
-def get_repetition_context(title: str, current_news_id: int | None = None) -> dict:
-    counts = get_similar_news_counts(title, current_news_id=current_news_id)
-
-    fatigue_score = compute_fatigue_score(
-        counts["similar_news_6h"],
-        counts["similar_news_12h"],
-        counts["similar_news_24h"],
-        counts["theme_news_6h"],
-        counts["theme_news_12h"],
-        counts["theme_news_24h"],
-        counts["repetition_pressure"],
-    )
-
-    repetition_level = "low"
-    if fatigue_score >= 7:
-        repetition_level = "high"
-    elif fatigue_score >= 4:
-        repetition_level = "medium"
-
-    return {
-        "theme": counts["theme"],
-        "similar_news_6h": counts["similar_news_6h"],
-        "similar_news_12h": counts["similar_news_12h"],
-        "similar_news_24h": counts["similar_news_24h"],
-        "theme_news_6h": counts["theme_news_6h"],
-        "theme_news_12h": counts["theme_news_12h"],
-        "theme_news_24h": counts["theme_news_24h"],
-        "duplicate_score": counts["duplicate_score"],
-        "theme_score": counts["theme_score"],
-        "repetition_pressure": counts["repetition_pressure"],
-        "fatigue_score": fatigue_score,
-        "repetition_level": repetition_level,
-        "has_escalation_words": has_escalation_words(title),
+    # Tiny, hyper-curated absolute safe list of aliases
+    explicit_aliases = {
+        "tcs": "TCS",
+        "sbi": "SBIN",
+        "state bank of india": "SBIN",
+        "infy": "INFY",
+        "infosys": "INFY",
+        "hul": "HINDUNILVR",
+        "itc": "ITC",
+        "hdfc": "HDFCBANK", # Post-merger safety
+        "hdfc bank": "HDFCBANK",
+        "lic": "LICI",
     }
+    
+    # Generic rejection list for extremely broad entities
+    rejection_list = {"tata", "adani", "reliance", "jio", "birla", "mahindra", "godrej", "bajaj", "airtel"}
 
-
-def adjust_fatigue_for_novelty(fatigue_score: int, title: str) -> int:
-    """
-    If repeated theme includes escalation / truly new catalyst words,
-    reduce fatigue penalty a bit.
-    """
-    if has_escalation_words(title):
-        return max(0, fatigue_score - 2)
-    return fatigue_score
-
-
-def get_novelty_label(title: str, current_news_id: int | None = None) -> str:
-    """
-    Strict novelty label for filter agent.
-    - true_new_event
-    - update_to_existing_theme
-    - repetition_only
-    """
-    rep = get_repetition_context(title, current_news_id=current_news_id)
-
-    if rep["similar_news_24h"] == 0 and rep["theme_news_24h"] == 0:
-        return "true_new_event"
-
-    if rep["repetition_pressure"] >= 0.85 and not rep["has_escalation_words"]:
-        return "repetition_only"
-
-    if rep["has_escalation_words"]:
-        return "update_to_existing_theme"
-
-    if rep["similar_news_12h"] >= 2:
-        return "repetition_only"
-
-    return "update_to_existing_theme"
-
+    for name in extracted_names:
+        # Validate that it is indeed a string. Sometimes models hallucinate dicts/lists.
+        if not isinstance(name, str):
+            continue
+            
+        name_clean = str(name).strip().lower()
+        if not name_clean:
+            continue
+            
+        name_norm = _normalize_text(name_clean)
+        clean_input = re.sub(r'\b(ltd|limited|corp|corporation|co|company|inc)\b', '', name_norm).strip()
+        
+        if not clean_input or clean_input in rejection_list:
+            continue
+            
+        # Check explicit alias
+        if clean_input in explicit_aliases:
+            valid_symbols.add(explicit_aliases[clean_input])
+            continue
+            
+        # Check strict DB exact matching
+        mapped_sym = exact_map.get(clean_input)
+        if mapped_sym and mapped_sym != "AMBIGUOUS":
+            valid_symbols.add(mapped_sym)
+            
+    return list(valid_symbols)
 
 # =========================================================
-# SIMPLE IMPACT ADJUSTMENT HELPERS
+# TOOL 2: GET STOCK CONTEXT (MERGED — KEY TOOL)
+# Replaces: get_stock_profile + get_price_timing + get_relative_performance
+# Single yfinance fetch set per stock.
 # =========================================================
 
-def get_fatigue_penalty(fatigue_score: int) -> int:
-    if fatigue_score >= 8:
-        return 4
-    if fatigue_score >= 6:
-        return 3
-    if fatigue_score >= 4:
-        return 2
-    if fatigue_score >= 2:
-        return 1
-    return 0
-
-
-def compute_remaining_tradable_impact(
-    base_event_impact: int | float,
-    published_at: datetime | None,
-    title: str,
-    current_news_id: int | None = None,
-) -> dict:
+def get_stock_context(symbol: str, published_iso: str = "") -> dict:
     """
-    Convenience helper for the second agent.
+    Combined stock intelligence: profile + price timing + relative performance.
 
-    Returns:
+    Output:
     {
-      base_event_impact,
-      fatigue_score,
-      adjusted_fatigue_score,
-      fatigue_penalty,
-      time_decay_penalty,
-      novelty_label,
-      remaining_tradable_impact
+        "symbol": "RELIANCE",
+        "current_price": 1245.30,
+        "day_change_pct": -0.82,
+        "market_cap_bucket": "large_cap",
+        "today_open": 151.20,
+        "today_high": 153.85,
+        "today_low": 147.10,
+        "previous_close": 154.00,
+        "gap_pct": -1.818,
+        "gap_type": "gap_down",
+        "atr_pct": 1.42,
+        "year_high": 1320.00,
+        "year_low": 1050.00,
+        "position_in_52w_range": 0.67,
+        "trend_5d": "up",
+
+        "signal_timing": "pre_article",
+        "move_before_pct": -1.80,
+        "move_after_pct": -0.30,
+        "lag_flag": true,
+
+        "stock_return_pct": -2.10,
+        "nifty_return_pct": -0.65,
+        "relative_vs_nifty_pct": -1.45,
+        "relative_interpretation": "stock_specific_negative",
+
+        "data_quality": "full"
     }
     """
-    rep = get_repetition_context(title, current_news_id=current_news_id)
-    novelty_label = get_novelty_label(title, current_news_id=current_news_id)
+    yf_sym = _normalize_for_yf(symbol)
+    pub_dt = _parse_published_iso(published_iso) if published_iso else None
+    result: dict[str, Any] = {"symbol": symbol}
 
-    raw_fatigue = rep["fatigue_score"]
-    adjusted_fatigue = adjust_fatigue_for_novelty(raw_fatigue, title)
+    # ── 1. YEARLY DATA (profile: ATR, 52w range, trend) ──
+    try:
+        hist_1y = _safe_history(yf_sym, period="1y", interval="1d")
+        if hist_1y is None or hist_1y.empty:
+            result["data_quality"] = "unavailable"
+            return result
 
-    fatigue_penalty = get_fatigue_penalty(adjusted_fatigue)
-    time_decay_penalty = get_time_decay_penalty(published_at)
+        current_price = float(hist_1y["Close"].iloc[-1])
+        prev_close = float(hist_1y["Close"].iloc[-2]) if len(hist_1y) >= 2 else current_price
+        result["current_price"] = round(current_price, 2)
+        result["day_change_pct"] = _pct_change(prev_close, current_price)
 
-    remaining = float(base_event_impact) - fatigue_penalty - time_decay_penalty
-    remaining = int(round(_clamp(remaining, 0, 10)))
+        # Today's session range + gap vs previous close
+        today_open = float(hist_1y["Open"].iloc[-1]) if len(hist_1y) >= 1 else None
+        today_high = float(hist_1y["High"].iloc[-1]) if len(hist_1y) >= 1 else None
+        today_low = float(hist_1y["Low"].iloc[-1]) if len(hist_1y) >= 1 else None
+
+        result["today_open"] = round(today_open, 2) if today_open is not None else None
+        result["today_high"] = round(today_high, 2) if today_high is not None else None
+        result["today_low"] = round(today_low, 2) if today_low is not None else None
+        result["previous_close"] = round(prev_close, 2) if prev_close is not None else None
+
+        if prev_close:
+            gap_pct = ((today_open - prev_close) / prev_close) * 100
+            result["gap_pct"] = round(gap_pct, 3)
+
+            if gap_pct > 0.15:
+                result["gap_type"] = "gap_up"
+            elif gap_pct < -0.15:
+                result["gap_type"] = "gap_down"
+            else:
+                result["gap_type"] = "flat"
+        else:
+            result["gap_pct"] = None
+            result["gap_type"] = "unknown"
+
+        year_high = float(hist_1y["High"].max())
+        year_low = float(hist_1y["Low"].min())
+        range_size = year_high - year_low
+        result["year_high"] = round(year_high, 2)
+        result["year_low"] = round(year_low, 2)
+        result["position_in_52w_range"] = round((current_price - year_low) / range_size, 2) if range_size > 0 else 0.5
+
+        # ATR
+        if len(hist_1y) >= 15:
+            df = hist_1y.copy()
+            df["H-L"] = df["High"] - df["Low"]
+            df["H-PC"] = (df["High"] - df["Close"].shift(1)).abs()
+            df["L-PC"] = (df["Low"] - df["Close"].shift(1)).abs()
+            tr = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
+            atr_val = float(tr.rolling(14).mean().iloc[-1])
+            result["atr_pct"] = round((atr_val / current_price) * 100, 2) if current_price else None
+        else:
+            result["atr_pct"] = None
+
+        # 5d trend
+        if len(hist_1y) >= 5:
+            chg_5d = _pct_change(float(hist_1y["Close"].iloc[-5]), current_price) or 0
+            result["trend_5d"] = "up" if chg_5d > 0.5 else ("down" if chg_5d < -0.5 else "flat")
+        else:
+            result["trend_5d"] = "flat"
+
+        # Market cap bucket
+        try:
+            info = yf.Ticker(yf_sym).info
+            mktcap_usd = info.get("marketCap")
+            if mktcap_usd:
+                cap_cr = round(mktcap_usd * 83 / 1e7, 0)
+                result["market_cap_bucket"] = "large_cap" if cap_cr >= 20000 else ("mid_cap" if cap_cr >= 5000 else "small_cap")
+            else:
+                result["market_cap_bucket"] = "unknown"
+        except Exception:
+            result["market_cap_bucket"] = "unknown"
+
+    except Exception:
+        result["data_quality"] = "unavailable"
+        return result
+
+    # ── 2. INTRADAY DATA (price timing + relative performance) ──
+    if pub_dt:
+        now_utc = datetime.now(timezone.utc)
+        fetch_start = pub_dt - timedelta(minutes=60)
+        fetch_end = now_utc + timedelta(minutes=5)
+
+        try:
+            intra_df = yf.Ticker(yf_sym).history(start=fetch_start, end=fetch_end, interval="15m")
+            if intra_df is not None and not intra_df.empty:
+                if intra_df.index.tz is None:
+                    intra_df.index = intra_df.index.tz_localize(timezone.utc)
+                else:
+                    intra_df.index = intra_df.index.tz_convert(timezone.utc)
+
+                pre_df = intra_df[intra_df.index < pub_dt]
+                post_df = intra_df[intra_df.index >= pub_dt]
+
+                # Price timing
+                if not pre_df.empty and not post_df.empty:
+                    move_before = _pct_change(float(pre_df["Close"].iloc[0]), float(pre_df["Close"].iloc[-1]))
+                    move_after = _pct_change(float(post_df["Close"].iloc[0]), float(intra_df["Close"].iloc[-1]))
+                    result["move_before_pct"] = move_before
+                    result["move_after_pct"] = move_after
+
+                    if move_before is not None and move_after is not None:
+                        abs_b, abs_a = abs(move_before), abs(move_after)
+                        total = abs_b + abs_a
+                        if total >= 0.2:
+                            share_before = abs_b / total
+                            if share_before > 0.65:
+                                result["signal_timing"] = "pre_article"
+                                result["lag_flag"] = True
+                            elif share_before < 0.35:
+                                result["signal_timing"] = "post_article"
+                                result["lag_flag"] = False
+                            else:
+                                result["signal_timing"] = "concurrent"
+                                result["lag_flag"] = False
+                        else:
+                            result["signal_timing"] = "no_move"
+                            result["lag_flag"] = False
+
+                # Relative performance vs Nifty
+                if not post_df.empty and len(post_df) >= 2:
+                    stock_ret = _pct_change(float(post_df["Close"].iloc[0]), float(intra_df["Close"].iloc[-1]))
+                    result["stock_return_pct"] = stock_ret
+
+                    # Fetch Nifty for same window
+                    try:
+                        nifty_df = yf.Ticker("^NSEI").history(start=fetch_start, end=fetch_end, interval="15m")
+                        if nifty_df is not None and not nifty_df.empty:
+                            if nifty_df.index.tz is None:
+                                nifty_df.index = nifty_df.index.tz_localize(timezone.utc)
+                            else:
+                                nifty_df.index = nifty_df.index.tz_convert(timezone.utc)
+                            nifty_post = nifty_df[nifty_df.index >= pub_dt]
+                            if not nifty_post.empty and len(nifty_post) >= 2:
+                                nifty_ret = _pct_change(float(nifty_post["Close"].iloc[0]), float(nifty_df["Close"].iloc[-1]))
+                                result["nifty_return_pct"] = nifty_ret
+
+                                if stock_ret is not None and nifty_ret is not None:
+                                    rel = round(stock_ret - nifty_ret, 3)
+                                    result["relative_vs_nifty_pct"] = rel
+
+                                    # Interpretation
+                                    if abs(stock_ret) > 0.2 and abs(nifty_ret) > 0.2 and ((stock_ret > 0) != (nifty_ret > 0)):
+                                        result["relative_interpretation"] = "divergent"
+                                    elif abs(rel) < 0.5 and abs(stock_ret) < 0.3:
+                                        result["relative_interpretation"] = "neutral"
+                                    elif rel > 0.5:
+                                        result["relative_interpretation"] = "stock_specific_positive"
+                                    elif rel < -0.5:
+                                        result["relative_interpretation"] = "stock_specific_negative"
+                                    else:
+                                        result["relative_interpretation"] = "market_driven_positive" if stock_ret > 0 else "market_driven_negative"
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    result.setdefault("data_quality", "full")
+    return result
+
+
+# =========================================================
+# TOOL 3: PEER REACTION (SIMPLIFIED)
+# Max 3 peers, daily data only.
+# =========================================================
+
+def _build_peer_sql(sector_canon: str) -> tuple[str, list[str]]:
+    keywords = SECTOR_DB_KEYWORDS.get(sector_canon, [])
+    if not keywords:
+        return "1=0", []
+    conditions, params = [], []
+    for kw in keywords:
+        safe_kw = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{safe_kw}%"
+        conditions.append("(LOWER(sector) LIKE %s OR LOWER(industry) LIKE %s OR LOWER(basic_industry) LIKE %s)")
+        params.extend([pattern, pattern, pattern])
+    return " OR ".join(conditions), params
+
+
+def get_peer_reaction(symbol: str, sector: str, published_iso: str = "") -> dict:
+    """
+    Compares target stock's daily return vs up to 3 sector peers.
+    """
+    sector_canon = _canonicalize_sector(sector) or sector.lower()
+    peer_symbols: list[str] = []
+
+    try:
+        where_clause, kw_params = _build_peer_sql(sector_canon)
+        if where_clause != "1=0":
+            rows = fetch_all(
+                f"SELECT nse_symbol FROM companies WHERE nse_symbol IS NOT NULL "
+                f"AND TRIM(nse_symbol) <> '' AND nse_symbol != %s AND ({where_clause}) LIMIT 10",
+                [symbol] + kw_params,
+            ) or []
+            peer_symbols = [r["nse_symbol"] for r in rows if r.get("nse_symbol")]
+    except Exception:
+        pass
+
+    if len(peer_symbols) < 2:
+        return {"target_symbol": symbol, "sector": sector, "move_type": "insufficient_peers", "data_quality": "unavailable"}
+
+    # Target return (daily)
+    target_ret = None
+    try:
+        df = _safe_history(_normalize_for_yf(symbol), period="5d", interval="1d")
+        if df is not None and len(df) >= 2:
+            target_ret = _pct_change(float(df["Close"].iloc[-2]), float(df["Close"].iloc[-1]))
+    except Exception:
+        pass
+
+    # Peer returns (daily, max 3)
+    sampled = peer_symbols[:3]
+    peer_returns: dict[str, float | None] = {}
+    for peer in sampled:
+        try:
+            df = _safe_history(_normalize_for_yf(peer), period="5d", interval="1d")
+            if df is not None and len(df) >= 2:
+                peer_returns[peer] = _pct_change(float(df["Close"].iloc[-2]), float(df["Close"].iloc[-1]))
+            else:
+                peer_returns[peer] = None
+        except Exception:
+            peer_returns[peer] = None
+
+    valid = [v for v in peer_returns.values() if v is not None]
+    peer_avg = round(sum(valid) / len(valid), 3) if valid else None
+
+    move_type = "mixed"
+    if target_ret is not None and peer_avg is not None:
+        diff = abs(target_ret - peer_avg)
+        same_dir = sum(1 for v in valid if (v > 0) == (target_ret > 0))
+        if diff >= 1.0:
+            move_type = "isolated"
+        elif diff <= 0.4 and same_dir >= len(valid) * 0.6:
+            move_type = "basket_move"
 
     return {
-        "base_event_impact": float(base_event_impact),
-        "theme": rep["theme"],
-        "repetition_level": rep["repetition_level"],
-        "fatigue_score": raw_fatigue,
-        "adjusted_fatigue_score": adjusted_fatigue,
-        "fatigue_penalty": fatigue_penalty,
-        "time_decay_penalty": time_decay_penalty,
-        "novelty_label": novelty_label,
-        "remaining_tradable_impact": remaining,
+        "target_symbol": symbol,
+        "target_return_pct": target_ret,
+        "sector": sector,
+        "peers_sampled": sampled,
+        "peer_returns": peer_returns,
+        "peer_avg_return_pct": peer_avg,
+        "move_type": move_type,
+        "data_quality": "good" if valid else "unavailable",
     }
 
 
-IST = ZoneInfo("Asia/Kolkata")
-ET = ZoneInfo("America/New_York")
+# =========================================================
+# TOOL 4: BROAD MARKET SNAPSHOT
+# =========================================================
 
+def get_broad_market_snapshot() -> dict:
+    """Nifty 50 + Sensex current session context."""
+    def _fetch(yf_sym: str) -> dict:
+        try:
+            hist = _safe_history(yf_sym, period="5d", interval="1d")
+            if hist is None or hist.empty:
+                return {}
+            curr = float(hist["Close"].iloc[-1])
+            prev = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else curr
+            chg_5d = _pct_change(float(hist["Close"].iloc[0]), curr) or 0
+            return {
+                "current": round(curr, 2),
+                "day_change_pct": _pct_change(prev, curr),
+                "trend_5d": "up" if chg_5d > 0.5 else ("down" if chg_5d < -0.5 else "flat"),
+            }
+        except Exception:
+            return {}
 
-def get_market_status(now_ist: datetime | None = None) -> dict:
-    """
-    Return market status using IST as the reference timezone.
+    nifty = _fetch("^NSEI")
+    sensex = _fetch("^BSESN")
+    nifty_chg = nifty.get("day_change_pct")
 
-    Status meanings:
-    - crypto: always "open"
-    - forex: "open" or "closed"
-    - us_equities: "pre_market" | "regular" | "after_hours" | "closed"
-    - futures: "open" | "maintenance_break" | "closed"
-
-    Notes:
-    - US equities:
-        pre-market   1:30 PM–7:00 PM IST (roughly, DST-adjusted via ET conversion)
-        regular       7:00 PM–1:30 AM IST
-        after-hours   1:30 AM–5:30 AM IST
-      These come from standard ET sessions converted dynamically.
-    - Forex:
-        Open from Sunday 5:00 PM ET to Friday 5:00 PM ET.
-    - CME-style futures:
-        Open from Sunday 6:00 PM ET to Friday 5:00 PM ET,
-        with daily maintenance break 5:00 PM–6:00 PM ET.
-    """
-    if now_ist is None:
-        now_ist = datetime.now(IST)
-    elif now_ist.tzinfo is None:
-        now_ist = now_ist.replace(tzinfo=IST)
+    if nifty_chg is None:
+        sentiment = "unknown"
+    elif nifty_chg >= 1.0:
+        sentiment = "strongly_bullish"
+    elif nifty_chg >= 0.3:
+        sentiment = "mildly_bullish"
+    elif nifty_chg <= -1.0:
+        sentiment = "strongly_bearish"
+    elif nifty_chg <= -0.3:
+        sentiment = "mildly_bearish"
     else:
-        now_ist = now_ist.astimezone(IST)
+        sentiment = "neutral"
 
-    now_et = now_ist.astimezone(ET)
-    et_weekday = now_et.weekday()  # Mon=0 ... Sun=6
-    et_t = now_et.time()
-
-    status = {
-        "timestamp_ist": now_ist.isoformat(),
-        "timestamp_et": now_et.isoformat(),
-        "crypto": "open",
-        "forex": _get_forex_status(et_weekday, et_t),
-        "us_equities": _get_us_equities_status(et_weekday, et_t),
-        "futures": _get_futures_status(et_weekday, et_t),
-    }
-
-    return status
+    return {"nifty50": nifty, "sensex": sensex, "session_sentiment": sentiment}
 
 
-def _get_us_equities_status(weekday: int, et_t: time) -> str:
-    # Closed on Saturday/Sunday
+# =========================================================
+# TOOL 5: SOURCE CREDIBILITY
+# =========================================================
+
+def get_source_credibility(source: str) -> dict:
+    """Returns source credibility tier, confidence cap, and event signal type."""
+    s = (source or "").strip().lower()
+
+    rumor_signals = ["sources say", "reportedly", "exclusive", "people familiar", "unconfirmed"]
+    is_rumor = any(sig in s for sig in rumor_signals)
+
+    if any(x in s for x in ["rbi", "sebi", "nse announcement", "bse announcement", "regulator"]):
+        return {"source_type": "regulator", "credibility_tier": "highest", "confidence_cap": 85,
+                "treat_event_as": "confirmed", "event_signal_type": "rumor_or_scoop" if is_rumor else "primary_filing"}
+
+    if any(x in s for x in ["government", "pib", "ministry", "cabinet"]):
+        return {"source_type": "government", "credibility_tier": "very_high", "confidence_cap": 85,
+                "treat_event_as": "confirmed", "event_signal_type": "primary_filing"}
+
+    if any(x in s for x in ["company filing", "exchange filing", "annual report", "bse:results", "nse:results"]):
+        return {"source_type": "company_filing", "credibility_tier": "high", "confidence_cap": 85,
+                "treat_event_as": "confirmed", "event_signal_type": "primary_filing"}
+
+    if any(x in s for x in ["reuters", "bloomberg", "economic times", "moneycontrol",
+                              "mint", "livemint", "business standard", "cnbc", "financial express"]):
+        return {"source_type": "financial_media", "credibility_tier": "medium_high",
+                "confidence_cap": 60 if is_rumor else 75, "treat_event_as": "reported",
+                "event_signal_type": "rumor_or_scoop" if is_rumor else "original_reporting"}
+
+    if any(x in s for x in ["broker", "brokerage", "research", "jefferies", "goldman",
+                              "morgan stanley", "kotak", "motilal"]):
+        return {"source_type": "broker_or_rating", "credibility_tier": "medium", "confidence_cap": 65,
+                "treat_event_as": "opinion", "event_signal_type": "analyst_view"}
+
+    return {"source_type": "unknown", "credibility_tier": "low", "confidence_cap": 50,
+            "treat_event_as": "unverified", "event_signal_type": "unknown"}
+
+
+# =========================================================
+# TOOL 6: MARKET STATUS
+# =========================================================
+
+def get_market_status() -> dict:
+    """Current Indian market session status with holiday awareness."""
+    now = _now_ist()
+    today = now.date()
+    weekday = now.weekday()
+    time_str = now.strftime("%H:%M")
+
     if weekday >= 5:
-        return "closed"
+        return {"equities": "closed", "time_ist": time_str, "is_holiday": False,
+                "session_type": "weekend", "tradeability_window": "closed"}
 
-    pre_market_start = time(4, 0)
-    regular_start = time(9, 30)
-    regular_end = time(16, 0)
-    after_hours_end = time(20, 0)
+    if today in NSE_HOLIDAYS_2026:
+        if today in NSE_MUHURAT_DATES_2026:
+            m_open = datetime.combine(today, time(18, 0), tzinfo=IST)
+            m_close = datetime.combine(today, time(19, 0), tzinfo=IST)
+            if m_open <= now <= m_close:
+                return {"equities": "muhurat", "time_ist": time_str, "is_holiday": True,
+                        "session_type": "muhurat", "tradeability_window": "active"}
+        return {"equities": "holiday", "time_ist": time_str, "is_holiday": True,
+                "session_type": "holiday", "tradeability_window": "closed"}
 
-    if pre_market_start <= et_t < regular_start:
-        return "pre_market"
-    if regular_start <= et_t < regular_end:
-        return "regular"
-    if regular_end <= et_t < after_hours_end:
-        return "after_hours"
-    return "closed"
+    pre_open = datetime.combine(today, time(9, 0), tzinfo=IST)
+    mkt_open = datetime.combine(today, time(9, 15), tzinfo=IST)
+    mkt_close = datetime.combine(today, time(15, 30), tzinfo=IST)
 
+    if pre_open <= now < mkt_open:
+        equities, window = "pre_open", "pre_open"
+    elif mkt_open <= now <= mkt_close:
+        equities, window = "open", "active"
+    else:
+        equities, window = "closed", "closed"
 
-def _get_forex_status(weekday: int, et_t: time) -> str:
-    # Forex: Sunday 5:00 PM ET -> Friday 5:00 PM ET
-    # Sat closed, most of Sun closed until 5 PM ET
-    if weekday == 5:  # Saturday
-        return "closed"
-
-    if weekday == 6:  # Sunday
-        return "open" if et_t >= time(17, 0) else "closed"
-
-    if weekday == 4:  # Friday
-        return "open" if et_t < time(17, 0) else "closed"
-
-    return "open"  # Mon-Thu
+    return {"equities": equities, "time_ist": time_str, "is_holiday": False,
+            "session_type": "normal", "tradeability_window": window}
 
 
-def _get_futures_status(weekday: int, et_t: time) -> str:
-    # CME-style futures:
-    # Open Sunday 6:00 PM ET -> Friday 5:00 PM ET
-    # Daily maintenance break: 5:00 PM–6:00 PM ET
-    if weekday == 5:  # Saturday
-        return "closed"
+# =========================================================
+# TOOL 7: NOVELTY CLASSIFIER
+# =========================================================
 
-    if weekday == 6:  # Sunday
-        return "open" if et_t >= time(18, 0) else "closed"
+def classify_novelty(title: str, summary: str = "") -> dict:
+    """Classifies event novelty: TRUE_CATALYST, EXPECTED_SURPRISE, EXPECTED_ROUTINE, AMBIGUOUS."""
+    text = _normalize_text(f"{title} {summary}")
 
-    if weekday == 4:  # Friday
-        if et_t < time(17, 0):
-            return "open"
-        return "closed"
+    routine_phrases = ["in line with", "meets estimates", "meets expectations", "as expected",
+                       "in-line", "broadly in line", "no surprises", "largely in line"]
+    earnings_phrases = ["q1 results", "q2 results", "q3 results", "q4 results",
+                        "quarterly results", "quarterly earnings", "net profit", "revenue",
+                        "ebitda", "earnings", "declares dividend"]
+    scheduled_phrases = ["guidance", "rbi policy", "monetary policy", "budget", "agm", "policy meeting"]
+    surprise_phrases = ["beats", "beat estimates", "misses", "missed estimates", "surprise",
+                        "unexpected", "shock", "unforeseen", "plunges", "surges", "jumps", "crashes"]
+    catalyst_phrases = ["order win", "contract awarded", "wins contract", "secures order",
+                        "bags order", "acquisition", "merger", "takeover", "acquires",
+                        "stake sale", "buyback announced", "plant fire", "plant shutdown",
+                        "accident", "explosion", "regulatory ban", "sebi action", "penalty imposed",
+                        "fda approval", "drug approval", "management change", "ceo resign",
+                        "promoter sell", "block deal"]
 
-    # Mon-Thu
-    if time(17, 0) <= et_t < time(18, 0):
-        return "maintenance_break"
-    return "open"
+    has_routine = any(p in text for p in routine_phrases)
+    has_earnings = any(p in text for p in earnings_phrases)
+    has_scheduled = any(p in text for p in scheduled_phrases)
+    has_surprise = any(p in text for p in surprise_phrases)
+    has_catalyst = any(p in text for p in catalyst_phrases)
 
-
-STOPWORDS = {
-    "the", "a", "an", "and", "or", "but", "if", "to", "of", "for", "on", "in",
-    "at", "by", "from", "with", "as", "into", "after", "before", "over", "under",
-    "amid", "near", "around", "says", "said", "say", "sees", "warns", "expects",
-    "watch", "watching", "traders", "markets", "market", "investors", "update"
-}
-
-
-def _title_tokens(norm_title: str) -> set[str]:
-    return {t for t in norm_title.split() if len(t) > 2 and t not in STOPWORDS and t != "<num>"}
-
-
-def _token_overlap_score(a_norm: str, b_norm: str) -> float:
-    ta = _title_tokens(a_norm)
-    tb = _title_tokens(b_norm)
-    if not ta or not tb:
-        return 0.0
-    inter = len(ta & tb)
-    union = len(ta | tb)
-    return inter / union if union else 0.0
-
-
-def _headline_similarity_score(a_norm: str, b_norm: str) -> float:
-    seq = SequenceMatcher(None, a_norm, b_norm).ratio()
-    tok = _token_overlap_score(a_norm, b_norm)
-    return max(seq, tok)
+    if has_catalyst and not has_routine:
+        return {"novelty": "TRUE_CATALYST", "confidence": "high"}
+    if has_routine and not has_surprise and not has_catalyst:
+        return {"novelty": "EXPECTED_ROUTINE", "confidence": "high"}
+    if (has_earnings or has_scheduled) and has_surprise and not has_routine:
+        return {"novelty": "EXPECTED_SURPRISE", "confidence": "medium"}
+    if (has_earnings or has_scheduled) and not has_surprise and not has_routine:
+        return {"novelty": "EXPECTED_ROUTINE", "confidence": "medium"}
+    if has_surprise or has_catalyst:
+        return {"novelty": "TRUE_CATALYST", "confidence": "low"}
+    return {"novelty": "AMBIGUOUS", "confidence": "low"}
 
 
-def get_filter_context(title: str, current_news_id: int | None = None) -> dict:
-    reaction = detect_reaction_headline(title)
-    repetition = get_repetition_context(title, current_news_id=current_news_id)
-    recent = search_recent_news(title, current_news_id=current_news_id, hours_back=48)
-
-    novelty_label = get_novelty_label(title, current_news_id=current_news_id)
-
-    return {
-        "theme": repetition["theme"],
-        "novelty_label": novelty_label,
-        "has_escalation_words": repetition["has_escalation_words"],
-        "reaction_headline": reaction["reaction_headline"],
-        "headline_move_pct": reaction["headline_move_pct"],
-        "has_new_catalyst_words": reaction["has_new_catalyst"],
-        "similar_news_6h": repetition["similar_news_6h"],
-        "similar_news_12h": repetition["similar_news_12h"],
-        "similar_news_24h": repetition["similar_news_24h"],
-        "theme_news_6h": repetition["theme_news_6h"],
-        "theme_news_12h": repetition["theme_news_12h"],
-        "theme_news_24h": repetition["theme_news_24h"],
-        "duplicate_score": repetition["duplicate_score"],
-        "theme_score": repetition["theme_score"],
-        "repetition_pressure": repetition["repetition_pressure"],
-        "fatigue_score": repetition["fatigue_score"],
-        "repetition_level": repetition["repetition_level"],
-        "priced_in": recent["priced_in"],
-        "match_score": recent["match_score"],
-        "matched_title": recent.get("matched_title"),
-        "matched_hours_ago": recent.get("matched_hours_ago"),
-    }

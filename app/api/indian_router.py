@@ -53,11 +53,8 @@ async def get_indian_news(source: str = Query(None, description="Filter news by 
     """Get Indian news articles, sorted by newest first."""
     
     query = """SELECT id, title, link, published, source, description, image_url,
-        impact_score, impact_summary, affected_markets, affected_sectors, impact_duration,
-        analyzed, created_at, market_mode, usd_bias, crypto_bias, trade_actions,
-        execution_window, confidence, forex_pairs, affected_forex_pairs, conviction_score, volatility_regime,
-        dollar_liquidity_state, position_size_percent, safe_haven_flow, research_text,
-        is_new_information, tools_used, analysis_data, news_relevance, news_category,
+        impact_score, impact_summary, analyzed, created_at,
+        analysis_data, news_relevance, news_category,
         news_impact_level, news_reason, symbols,
         market_bias, signal_bucket, primary_symbol, executive_summary, event_id, event_title
     FROM indian_news WHERE 1=1"""

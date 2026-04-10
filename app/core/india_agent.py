@@ -104,7 +104,7 @@ async def analyze_indian_news(title: str, description: str = "") -> Optional[Dic
         if not company_mentions:
             resolved_symbols = []
         else:
-            from app.ind.tools import strict_resolve_symbols
+            from app.core.tools import strict_resolve_symbols
             resolved_symbols = strict_resolve_symbols(company_mentions)
             
         # 4. Final Output Formation
@@ -118,4 +118,3 @@ async def analyze_indian_news(title: str, description: str = "") -> Optional[Dic
     except Exception as e:
         logger.error(f"Error during Indian news analysis: {e}")
         return None
-

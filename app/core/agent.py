@@ -24,10 +24,10 @@ from google import genai
 from google.genai import types
 
 from app.core.db import execute_query, fetch_one
-from app.ind.planner import run_planner
-from app.ind.prompt import INDIAN_SYSTEM_PROMPT, build_compact_prompt
-from app.ind.schema import SCHEMA_TEMPLATE
-from app.ind.tools import (
+from app.core.planner import run_planner
+from app.core.prompt import INDIAN_SYSTEM_PROMPT, build_compact_prompt
+from app.core.schema import SCHEMA_TEMPLATE
+from app.core.tools import (
     get_source_credibility,
     get_market_status,
     get_stock_context,
@@ -554,131 +554,11 @@ def save_indian_analysis(news_id: int, analysis: dict) -> None:
     execute_query(query, params)
     _log(f"[INDIA SAVE] news_id={news_id}")
 
-    try:
-        create_predictions(news_id, analysis)
-    except Exception as e:
-        _log(f"[INDIA PRED] Failed for news_id={news_id}: {e}")
 
     try:
         create_watchlists(news_id, analysis)
     except Exception as e:
         _log(f"[INDIA SUG] Failed for news_id={news_id}: {e}")
-
-
-# =========================================================
-# PREDICTIONS + WATCHLISTS (compact)
-# =========================================================
-
-_DURATION_MAP = {
-    "intraday": 60, "short_term": 1440, "medium_term": 10080,
-    "1 day": 1440, "2 days": 2880, "1 week": 10080,
-}
-
-
-def _parse_move_band(raw: str | int | float) -> float:
-    """Convert move band or reaction to representative midpoint pct."""
-    if isinstance(raw, (int, float)):
-        return abs(float(raw))
-    s = str(raw or "").strip().lower().replace("%", "")
-    
-    # Handle new reaction levels
-    reaction_map = {"weak": 1.0, "moderate": 3.0, "strong": 6.0, "uncertain": 0.0}
-    if s in reaction_map:
-        return reaction_map[s]
-        
-    band_map = {"0-1": 0.5, "1-3": 2.0, "3-5": 4.0, "5-8": 6.5, "8+": 8.0, "unclear": 0.0}
-    if s in band_map:
-        return band_map[s]
-    if "-" in s:
-        try:
-            parts = [float(p.strip()) for p in s.split("-") if p.strip()]
-            return sum(parts) / len(parts) if parts else 0.0
-        except Exception:
-            pass
-    try:
-        return abs(float(s))
-    except Exception:
-        return 0.0
-
-
-def _normalize_direction(d: str) -> str:
-    d = (d or "").strip().lower()
-    if d in {"bullish", "positive", "up"}: return "bullish"
-    if d in {"bearish", "negative", "down"}: return "bearish"
-    return d if d in {"mixed", "neutral"} else "unclear"
-
-
-def create_predictions(news_id: int, analysis: dict) -> None:
-    """Create prediction rows from stock_impacts."""
-    stock_impacts = analysis.get("stock_impacts", []) or []
-    core_view = analysis.get("core_view", {}) or {}
-    horizon = core_view.get("horizon", "short_term") or "short_term"
-    trade_obj = analysis.get("tradeability", {}) or {}
-    tradeability = trade_obj.get("classification", "no_edge") if isinstance(trade_obj, dict) else str(trade_obj)
-
-    if tradeability != "actionable_now" or not stock_impacts:
-        return
-
-    news_row = fetch_one("SELECT analyzed_at FROM indian_news WHERE id = %s", (news_id,))
-    now_dt = news_row["analyzed_at"] if news_row and news_row.get("analyzed_at") else datetime.now(timezone.utc)
-
-    try:
-        execute_query("DELETE FROM predictions WHERE news_id = %s", (news_id,))
-    except Exception:
-        pass
-
-    created = 0
-    for item in stock_impacts[:5]:
-        try:
-            symbol = (item.get("symbol") or "").strip().upper()
-            company_name = (item.get("company_name") or symbol).strip()
-            direction = _normalize_direction(item.get("bias", "unclear"))
-            confidence = int(item.get("confidence", 0) or 0)
-
-            if not symbol or direction in {"neutral", "unclear"} or confidence < 40:
-                continue
-
-            predicted_move = _parse_move_band(item.get("reaction", "0"))
-            if predicted_move <= 0:
-                continue
-
-            # Conservative clipping
-            if confidence < 55:
-                predicted_move = min(predicted_move, 2.0)
-            elif confidence < 70:
-                predicted_move = min(predicted_move, 4.0)
-
-            # Fetch current price
-            from app.ind.tools import get_stock_context
-            ctx = get_stock_context(symbol)
-            start_price = _safe_float(ctx.get("current_price"))
-            if not start_price:
-                continue
-
-            if direction == "bullish":
-                target_price = start_price * (1 + predicted_move / 100)
-            elif direction == "bearish":
-                target_price = start_price * (1 - predicted_move / 100)
-            else:
-                target_price = start_price
-
-            duration_minutes = _DURATION_MAP.get(horizon.lower(), 1440)
-
-            execute_query(
-                """INSERT INTO predictions
-                    (news_id, asset, asset_display_name, asset_class, direction,
-                     predicted_move_pct, expected_duration_label, expected_duration_minutes,
-                     start_time, start_price, target_price)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-                (news_id, symbol, company_name, "stock", direction,
-                 round(predicted_move, 4), horizon, duration_minutes,
-                 now_dt, start_price, round(target_price, 6)),
-            )
-            created += 1
-        except Exception as e:
-            _log(f"[INDIA PRED] Error for {item.get('symbol', '')}: {e}")
-
-    _log(f"[INDIA PRED] Created {created} prediction(s) for news_id={news_id}")
 
 
 def create_watchlists(news_id: int, analysis: dict) -> None:
