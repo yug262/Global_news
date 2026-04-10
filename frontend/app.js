@@ -16,6 +16,17 @@ const DEFAULT_LOCAL_API = (() => {
 const API_BASE = (window.APP_CONFIG && typeof window.APP_CONFIG.BACKEND_URL === 'string' && window.APP_CONFIG.BACKEND_URL.trim())
     ? window.APP_CONFIG.BACKEND_URL.trim()
     : DEFAULT_LOCAL_API;
+
+// Wrapper around fetch() that injects the ngrok-skip-browser-warning header
+// to bypass the ngrok free-tier interstitial page (ERR_NGROK_6024).
+function apiFetch(url, options = {}) {
+    const headers = options.headers instanceof Headers
+        ? options.headers
+        : new Headers(options.headers || {});
+    headers.set('ngrok-skip-browser-warning', '1');
+    return fetch(url, { ...options, headers });
+}
+
 const REFRESH_INTERVAL = 30_000; // 30 seconds
 const SEARCH_DEBOUNCE = 300;
 const SCROLL_TOP_THRESHOLD = 400;
@@ -692,7 +703,7 @@ async function analyzeArticle(newsId, btnEl) {
     });
 
     try {
-        const res = await fetch(`${API_BASE}/api/analyze/${newsId}`, { method: 'POST' });
+        const res = await apiFetch(`${API_BASE}/api/analyze/${newsId}`, { method: 'POST' });
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -1060,7 +1071,7 @@ async function fetchPredictionsForModal(newsId) {
         const content = document.getElementById('predictionsContent');
         if (!predTabBtn || !loader || !content) return;
 
-        const res = await fetch(`${API_BASE}/api/predictions?news_id=${newsId}`);
+        const res = await apiFetch(`${API_BASE}/api/predictions?news_id=${newsId}`);
         const json = await res.json();
 
         loader.style.display = 'none';
@@ -1512,7 +1523,7 @@ function renderNews(articles, prepend = false, append = false) {
 // ---- Fetch Sources ----
 async function fetchSources() {
     try {
-        const res = await fetch(`${API_BASE}/api/sources`);
+        const res = await apiFetch(`${API_BASE}/api/sources`);
         const json = await res.json();
         if (json.status === 'success' && Array.isArray(json.data)) {
             // Skip DOM rebuild if sources list hasn't changed
@@ -1630,7 +1641,7 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
             url += `&search=${encodeURIComponent(searchQuery)}`;
         }
 
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -1714,7 +1725,7 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
 // ---- Fetch Footer Stats ----
 async function fetchStats() {
     try {
-        const res = await fetch(`${API_BASE}/api/stats`);
+        const res = await apiFetch(`${API_BASE}/api/stats`);
         const json = await res.json();
         if (json.status === 'success') {
             const d = json.data;
@@ -1923,14 +1934,14 @@ function startChartRefresh(symbol) {
 // ---- Load first pair that has candle data ----
 async function loadFirstAvailablePair() {
     try {
-        const res = await fetch(`${API_BASE}/api/forex/pairs?q=EURUSD`);
+        const res = await apiFetch(`${API_BASE}/api/forex/pairs?q=EURUSD`);
         const json = await res.json();
         if (json.status === 'success' && json.data.length > 0) {
             await loadChart(json.data[0]);
             return;
         }
         // fallback: get any pair
-        const res2 = await fetch(`${API_BASE}/api/forex/pairs`);
+        const res2 = await apiFetch(`${API_BASE}/api/forex/pairs`);
         const json2 = await res2.json();
         if (json2.status === 'success' && json2.data.length > 0) {
             await loadChart(json2.data[0]);
@@ -1952,7 +1963,7 @@ async function doChartSearch(query) {
     }
     try {
         const url = `${API_BASE}/api/forex/pairs?q=${encodeURIComponent(query)}`;
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
         if (json.status !== 'success' || !json.data.length) {
             drop.innerHTML = `<div style="padding:10px 14px;color:#888;font-size:0.82rem;">No matching pairs found.</div>`;
@@ -2065,7 +2076,7 @@ async function fetchNewsMarkers(symbol) {
 
         const url = `${API_BASE}/api/forex/news-markers?symbol=${encodeURIComponent(pairOnly)}`;
         console.log('[NEWS MARKERS] Fetching from URL:', url);
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
         console.log('[NEWS MARKERS] Response:', json);
         if (json.status === 'success' && Array.isArray(json.data)) {
@@ -2435,7 +2446,7 @@ async function fetchCandleData(symbol) {
 
     try {
         const url = `${API_BASE}/api/forex/candles?symbol=${encodeURIComponent(symbol)}&limit=500`;
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
 
         if (json.status !== 'success' || !json.data || json.data.length === 0) {
