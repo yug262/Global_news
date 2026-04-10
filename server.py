@@ -1,10 +1,10 @@
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 from datetime import datetime, timezone
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Set
 import os
 import json
 import asyncio
@@ -13,10 +13,42 @@ from app.core.agent import analyze_news, save_analysis
 from app.core.db import fetch_all, fetch_one, execute_query
 
 # Thread pool for blocking database operations
-executor = ThreadPoolExecutor(max_workers=20)
+executor = ThreadPoolExecutor(max_workers=40)
 
 app = FastAPI(title="News Website API")
 SERVER_START = datetime.now(timezone.utc)
+
+# ===== WebSocket Connection Manager =====
+class ConnectionManager:
+    """Manages WebSocket connections for real-time multi-user updates."""
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        print(f"[WS] Client connected. Total: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        print(f"[WS] Client disconnected. Total: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Send a JSON message to all connected clients."""
+        if not self.active_connections:
+            return
+        data = json.dumps(message, default=str)
+        stale = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(data)
+            except Exception:
+                stale.append(connection)
+        for conn in stale:
+            self.disconnect(conn)
+
+ws_manager = ConnectionManager()
 
 # Async helpers to run blocking DB operations
 async def run_in_executor(func, *args):
@@ -31,6 +63,17 @@ async def run_with_timeout(func, timeout_sec, *args):
         return await asyncio.wait_for(future, timeout=timeout_sec)
     except asyncio.TimeoutError:
         raise TimeoutError(f"Operation timed out after {timeout_sec} seconds")
+
+# ===== Server-Side Stats Cache (avoids hammering COUNT(*) on every poll) =====
+import time as _time
+_stats_cache = {"global": {"data": None, "ts": 0}, "indian": {"data": None, "ts": 0}}
+_STATS_CACHE_TTL = 15  # seconds — shared cache across all users
+
+# ===== Analysis Concurrency Limiter =====
+# Prevents thread pool exhaustion: max 5 analyses running at the same time
+_analysis_semaphore = asyncio.Semaphore(5)
+_active_analyses = 0
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -62,7 +105,7 @@ def health_check():
 
 @app.get("/api/news")
 async def get_news(source: str = Query(None, description="Filter news by source name"), 
-             limit: int = Query(1000, description="Max number of articles to return"),
+             limit: int = Query(20, description="Max number of articles to return"),
              today_only: bool = Query(False, description="Only fetch today's news"),
              relevance: str = Query(None, description="Filter news by relevance"),
              analyzed_only: bool = Query(False, description="Only fetch analyzed news"),
@@ -72,13 +115,12 @@ async def get_news(source: str = Query(None, description="Filter news by source 
     """Get news articles, sorted by newest first (async, non-blocking)."""
     
     query = """SELECT id, title, link, published, source, description, image_url,
-        impact_score, impact_summary, affected_markets, affected_sectors, impact_duration,
-        analyzed, created_at, market_mode, usd_bias, crypto_bias, trade_actions,
-        execution_window, confidence, forex_pairs, affected_forex_pairs, conviction_score, volatility_regime,
-        dollar_liquidity_state, position_size_percent, safe_haven_flow, research_text,
-        is_new_information, tools_used, analysis_data, news_relevance, news_category,
-        news_impact_level, news_reason, event_id, event_title
-    FROM news WHERE 1=1"""
+       impact_score, impact_summary, affected_markets, affected_sectors, impact_duration,
+       analyzed, created_at, market_mode, usd_bias, crypto_bias, trade_actions,
+       execution_window, confidence, forex_pairs, affected_forex_pairs, conviction_score, volatility_regime,
+       dollar_liquidity_state, position_size_percent, safe_haven_flow, research_text,
+       is_new_information, tools_used, analysis_data, news_relevance, news_category,
+       news_impact_level, news_reason, event_id, event_title FROM news WHERE 1=1"""
     params: List[Any] = []
     
     if today_only:
@@ -275,22 +317,25 @@ async def get_indian_news(source: str = Query(None, description="Filter news by 
 
 
 @app.get("/api/sources")
-def get_sources():
+async def get_sources():
     """Get list of distinct news sources available."""
     query = "SELECT DISTINCT source FROM news ORDER BY source"
     try:
-         sources = fetch_all(query)
+         sources = await run_with_timeout(lambda: fetch_all(query), 10)
          return {"status": "success", "data": [s['source'] for s in sources]}
     except Exception as e:
          return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/indian_sources")
-def get_indian_sources():
+async def get_indian_sources():
     """Get list of distinct Indian news sources available (with NULL check)."""
     try:
-        rows = fetch_all(
-            "SELECT DISTINCT source FROM indian_news WHERE source IS NOT NULL ORDER BY source"
+        rows = await run_with_timeout(
+            lambda: fetch_all(
+                "SELECT DISTINCT source FROM indian_news WHERE source IS NOT NULL ORDER BY source"
+            ),
+            10
         )
         sources = [r["source"] for r in rows if r.get("source")]
         return {"status": "success", "data": sources}
@@ -301,7 +346,13 @@ def get_indian_sources():
 @app.post("/api/analyze/{news_id}")
 async def analyze_single_article(news_id: int):
     """Analyze a single news article by its DB id (async, non-blocking, with timeout)."""
+    global _active_analyses
     
+    # Enforce concurrency limit — prevent thread pool exhaustion under heavy load
+    if _active_analyses >= 5:
+        return {"status": "error", "message": "Server is busy analyzing other articles. Please try again in a moment."}
+    
+    _active_analyses += 1
     try:
         # Run blocking DB call in thread pool with 120 second timeout
         article = await run_with_timeout(
@@ -335,7 +386,36 @@ async def analyze_single_article(news_id: int):
                     30
                 )
                 print(f"[API] Analysis saved for news_id={news_id}, score={analysis.get('impact_score')}")
-                return {"status": "success", "data": analysis}
+                
+                # Re-fetch the full updated article from DB so frontend gets all fields
+                response_payload = {"status": "success", "data": analysis}
+                try:
+                    updated_row = await run_with_timeout(
+                        lambda: fetch_one(
+                            """SELECT id, title, link, published, source, description, image_url,
+                                impact_score, impact_summary, affected_markets, affected_sectors, impact_duration,
+                                analyzed, created_at, market_mode, usd_bias, crypto_bias, trade_actions,
+                                execution_window, confidence, forex_pairs, affected_forex_pairs, conviction_score, volatility_regime,
+                                dollar_liquidity_state, position_size_percent, safe_haven_flow, research_text,
+                                is_new_information, tools_used, analysis_data, news_relevance, news_category,
+                                news_impact_level, news_reason, event_id, event_title
+                            FROM news WHERE id = %s""", (news_id,)
+                        ),
+                        10
+                    )
+                    if updated_row:
+                        row_dict = dict(updated_row)
+                        if isinstance(row_dict.get('published'), datetime):
+                            row_dict['published'] = row_dict['published'].isoformat()
+                        if isinstance(row_dict.get('created_at'), datetime):
+                            row_dict['created_at'] = row_dict['created_at'].isoformat()
+                        response_payload["article"] = row_dict
+                        # Broadcast to all connected WebSocket clients
+                        await ws_manager.broadcast({"type": "article_updated", "scope": "global", "article": row_dict})
+                except Exception as row_err:
+                    print(f"[API] Re-fetch after save failed (non-critical): {row_err}")
+                
+                return response_payload
             except TimeoutError:
                 print(f"[API] save_analysis TIMEOUT for news_id={news_id}")
                 return {"status": "error", "message": "Analysis completed but save timed out"}
@@ -358,11 +438,18 @@ async def analyze_single_article(news_id: int):
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+    finally:
+        _active_analyses = max(0, _active_analyses - 1)
 
 
 @app.get("/api/stats")
 async def get_stats():
-    """Get dashboard statistics for the footer (with caching)."""
+    """Get dashboard statistics for the footer (with server-side caching)."""
+    now = _time.time()
+    cached = _stats_cache["global"]
+    if cached["data"] and (now - cached["ts"]) < _STATS_CACHE_TTL:
+        return cached["data"]
+    
     try:
         row = await run_with_timeout(
             lambda: fetch_one(
@@ -374,44 +461,55 @@ async def get_stats():
             10  # 10 second timeout for stats
         )
         uptime_seconds = int((datetime.now(timezone.utc) - SERVER_START).total_seconds())
-        return {
+        result = {
             "status": "success",
             "data": {
                 "total_articles": row["total"] if row else 0,
                 "analyzed_articles": row["analyzed"] if row else 0,
                 "source_count": row["sources"] if row else 0,
                 "uptime_seconds": uptime_seconds
-            },
-            "cache-control": "max-age=30"  # Cache for 30 seconds
+            }
         }
+        _stats_cache["global"] = {"data": result, "ts": now}
+        return result
     except TimeoutError:
+        if cached["data"]:
+            return cached["data"]  # Return stale data rather than error
         return {"status": "error", "message": "Stats query timeout"}
     except Exception as e:
+        if cached["data"]:
+            return cached["data"]
         return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/predictions")
-def get_predictions(news_id: Optional[int] = Query(None), limit: Optional[int] = Query(1000)):
+async def get_predictions(news_id: Optional[int] = Query(None), limit: Optional[int] = Query(20)):
     """List predictions, optionally filtered by news_id."""
     try:
         rows: List[Dict[str, Any]] = []
         if news_id:
-            raw_rows = fetch_all(
-                """SELECT p.*, n.title as news_title, n.link as news_link
-                FROM predictions p
-                LEFT JOIN news n ON n.id = p.news_id
-                WHERE p.news_id = %s
-                ORDER BY p.created_at DESC""",
-                (news_id,),
+            raw_rows = await run_with_timeout(
+                lambda: fetch_all(
+                    """SELECT p.*, n.title as news_title, n.link as news_link
+                    FROM predictions p
+                    LEFT JOIN news n ON n.id = p.news_id
+                    WHERE p.news_id = %s
+                    ORDER BY p.created_at DESC""",
+                    (news_id,),
+                ),
+                15
             )
         else:
-            raw_rows = fetch_all(
-                """SELECT p.*, n.title as news_title, n.link as news_link
-                FROM predictions p
-                LEFT JOIN news n ON n.id = p.news_id
-                ORDER BY p.created_at DESC
-                LIMIT %s""",
-                (limit,),
+            raw_rows = await run_with_timeout(
+                lambda: fetch_all(
+                    """SELECT p.*, n.title as news_title, n.link as news_link
+                    FROM predictions p
+                    LEFT JOIN news n ON n.id = p.news_id
+                    ORDER BY p.created_at DESC
+                    LIMIT %s""",
+                    (limit,),
+                ),
+                15
             )
         rows = [dict(r) for r in raw_rows]
         for r in rows:
@@ -429,23 +527,26 @@ def get_predictions(news_id: Optional[int] = Query(None), limit: Optional[int] =
 
 
 @app.get("/api/prediction-stats")
-def get_prediction_stats():
+async def get_prediction_stats():
     """Aggregate prediction statistics."""
     try:
-        row = fetch_one(
-            """SELECT
-                COUNT(*) as total,
-                COUNT(CASE WHEN finalized = true THEN 1 END) as finalized,
-                COUNT(CASE WHEN status = 'hit' THEN 1 END) as hit,
-                COUNT(CASE WHEN status = 'overperformed' THEN 1 END) as overperformed,
-                COUNT(CASE WHEN status = 'underperformed' THEN 1 END) as underperformed,
-                COUNT(CASE WHEN status = 'wrong' THEN 1 END) as wrong,
-                COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
-                COUNT(CASE WHEN status = 'error' THEN 1 END) as errors,
-                COALESCE(AVG(CASE WHEN finalized THEN final_move_pct END), 0) as avg_final_move,
-                COALESCE(AVG(CASE WHEN finalized THEN mfe_pct END), 0) as avg_mfe,
-                COALESCE(AVG(CASE WHEN finalized THEN mae_pct END), 0) as avg_mae
-            FROM predictions"""
+        row = await run_with_timeout(
+            lambda: fetch_one(
+                """SELECT
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN finalized = true THEN 1 END) as finalized,
+                    COUNT(CASE WHEN status = 'hit' THEN 1 END) as hit,
+                    COUNT(CASE WHEN status = 'overperformed' THEN 1 END) as overperformed,
+                    COUNT(CASE WHEN status = 'underperformed' THEN 1 END) as underperformed,
+                    COUNT(CASE WHEN status = 'wrong' THEN 1 END) as wrong,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+                    COUNT(CASE WHEN status = 'error' THEN 1 END) as errors,
+                    COALESCE(AVG(CASE WHEN finalized THEN final_move_pct END), 0) as avg_final_move,
+                    COALESCE(AVG(CASE WHEN finalized THEN mfe_pct END), 0) as avg_mfe,
+                    COALESCE(AVG(CASE WHEN finalized THEN mae_pct END), 0) as avg_mae
+                FROM predictions"""
+            ),
+            10
         )
         if not row:
             return {"status": "success", "data": {}}
@@ -914,17 +1015,25 @@ except NameError:
 
 
 @app.get("/api/indian_stats")
-def get_indian_stats():
-    """Get dashboard statistics for the footer, for Indian news."""
+async def get_indian_stats():
+    """Get dashboard statistics for the footer, for Indian news (with server-side caching)."""
+    now = _time.time()
+    cached = _stats_cache["indian"]
+    if cached["data"] and (now - cached["ts"]) < _STATS_CACHE_TTL:
+        return cached["data"]
+    
     try:
-        row = fetch_one(
-            "SELECT COUNT(*) as total, "
-            "COUNT(CASE WHEN analyzed = true THEN 1 END) as analyzed, "
-            "COUNT(DISTINCT source) as sources "
-            "FROM indian_news"
+        row = await run_with_timeout(
+            lambda: fetch_one(
+                "SELECT COUNT(*) as total, "
+                "COUNT(CASE WHEN analyzed = true THEN 1 END) as analyzed, "
+                "COUNT(DISTINCT source) as sources "
+                "FROM indian_news"
+            ),
+            10
         )
         uptime_seconds = int((datetime.now(timezone.utc) - SERVER_START).total_seconds())
-        return {
+        result = {
             "status": "success",
             "data": {
                 "total_articles": row["total"] if row else 0,
@@ -933,14 +1042,28 @@ def get_indian_stats():
                 "uptime_seconds": uptime_seconds
             }
         }
+        _stats_cache["indian"] = {"data": result, "ts": now}
+        return result
+    except TimeoutError:
+        if cached["data"]:
+            return cached["data"]
+        return {"status": "error", "message": "Stats query timeout"}
     except Exception as e:
+        if cached["data"]:
+            return cached["data"]
         return {"status": "error", "message": str(e)}
 
 @app.post("/api/indian_analyze/{news_id}")
 async def analyze_single_indian_article(news_id: int):
     """Analyze a single Indian news article by its DB id using the Indian Agent (async, non-blocking, with timeout)."""
     from app.ind.agent import analyze_indian_news, save_indian_analysis
+    global _active_analyses
     
+    # Enforce concurrency limit — prevent thread pool exhaustion under heavy load
+    if _active_analyses >= 5:
+        return {"status": "error", "message": "Server is busy analyzing other articles. Please try again in a moment."}
+    
+    _active_analyses += 1
     try:
         # Run blocking DB call in thread pool with 120 second timeout
         article = await run_with_timeout(
@@ -995,7 +1118,10 @@ async def analyze_single_indian_article(news_id: int):
                             updated_row['published'] = updated_row['published'].isoformat()
                         if isinstance(updated_row.get('created_at'), datetime):
                             updated_row['created_at'] = updated_row['created_at'].isoformat()
-                        return {"status": "success", "data": analysis, "article": dict(updated_row)}
+                        row_dict = dict(updated_row)
+                        # Broadcast to all connected WebSocket clients
+                        await ws_manager.broadcast({"type": "article_updated", "scope": "indian", "article": row_dict})
+                        return {"status": "success", "data": analysis, "article": row_dict}
                 except Exception as row_err:
                     print(f"[API] Re-fetch after save failed (non-critical): {row_err}")
                 
@@ -1022,6 +1148,30 @@ async def analyze_single_indian_article(news_id: int):
         import traceback
         traceback.print_exc()
         return {"status": "error", "message": str(e)}
+    finally:
+        _active_analyses = max(0, _active_analyses - 1)
+
+# ===== WebSocket Endpoint =====
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time multi-user dashboard updates.
+    
+    Clients connect here to receive instant notifications when:
+    - An article is analyzed (article_updated)
+    - New articles arrive (new_articles)
+    """
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive; listen for client pings
+            data = await websocket.receive_text()
+            # Respond to ping with pong
+            if data == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
+        ws_manager.disconnect(websocket)
 
 # API server entry point
     

@@ -31,11 +31,33 @@ def get_pool():
 
 
 def get_connection():
-    return get_pool().getconn()
+    """Get a connection from the pool with health checking."""
+    conn = get_pool().getconn()
+    try:
+        # Check if connection is still alive (catches stale/broken connections)
+        if conn.closed:
+            get_pool().putconn(conn, close=True)
+            conn = get_pool().getconn()
+        else:
+            # Quick health ping
+            conn.cursor().execute("SELECT 1")
+    except Exception:
+        try:
+            get_pool().putconn(conn, close=True)
+        except Exception:
+            pass
+        conn = get_pool().getconn()
+    return conn
 
 
 def release_connection(conn):
-    get_pool().putconn(conn)
+    try:
+        get_pool().putconn(conn)
+    except Exception:
+        try:
+            get_pool().putconn(conn, close=True)
+        except Exception:
+            pass
 
 
 def execute_query(query, params=None):
@@ -47,7 +69,10 @@ def execute_query(query, params=None):
             conn.commit()
             return cur.rowcount
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise e
     finally:
         release_connection(conn)
@@ -61,7 +86,10 @@ def execute_many(query, params_list):
             extras.execute_batch(cur, query, params_list)
             conn.commit()
     except Exception as e:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise e
     finally:
         release_connection(conn)
@@ -74,6 +102,12 @@ def fetch_all(query, params=None):
         with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
             cur.execute(query, params)
             return cur.fetchall()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise e
     finally:
         release_connection(conn)
 
@@ -85,5 +119,11 @@ def fetch_one(query, params=None):
         with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
             cur.execute(query, params)
             return cur.fetchone()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise e
     finally:
         release_connection(conn)

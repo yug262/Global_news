@@ -16,6 +16,17 @@ const DEFAULT_LOCAL_API = (() => {
 const API_BASE = (window.APP_CONFIG && typeof window.APP_CONFIG.BACKEND_URL === 'string' && window.APP_CONFIG.BACKEND_URL.trim())
     ? window.APP_CONFIG.BACKEND_URL.trim()
     : DEFAULT_LOCAL_API;
+
+// Wrapper around fetch() that injects the ngrok-skip-browser-warning header
+// to bypass the ngrok free-tier interstitial page (ERR_NGROK_6024).
+function apiFetch(url, options = {}) {
+    const headers = options.headers instanceof Headers
+        ? options.headers
+        : new Headers(options.headers || {});
+    headers.set('ngrok-skip-browser-warning', '1');
+    return fetch(url, { ...options, headers });
+}
+
 const REFRESH_INTERVAL = 30_000; // 30 seconds
 const SEARCH_DEBOUNCE = 300;
 const SCROLL_TOP_THRESHOLD = 400;
@@ -42,6 +53,7 @@ const articlesPerPage = 20;
 let hasMoreArticles = true;
 let isLoadingMore = false;
 const seenArticleIds = new Set();
+let _fetchAbortController = null; // Abort stale fetch requests
 
 // ---- DOM Elements ----
 const newsGrid = document.getElementById('newsGrid');
@@ -1008,7 +1020,7 @@ async function analyzeArticle(newsId, btnEl) {
     });
 
     try {
-        const res = await fetch(`${API_BASE}/api/indian_analyze/${newsId}`, { method: 'POST' });
+        const res = await apiFetch(`${API_BASE}/api/indian_analyze/${newsId}`, { method: 'POST' });
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -1072,8 +1084,21 @@ async function analyzeArticle(newsId, btnEl) {
                 }
             }
 
-            await fetchNews(false, true); // Still run just in case for backend sync
+            // No need for fetchNews here — WebSocket handles cross-user sync instantly
         } else {
+            const isBusy = json.message && json.message.includes('busy');
+            if (isBusy) {
+                showToast('Server is busy — will auto-retry in 5s', 'info');
+                document.querySelectorAll(`.analyze-btn[data-id="${newsId}"]`).forEach(btn => {
+                    btn.innerHTML = '⏳ Queued — retrying...';
+                });
+                // Auto-retry after 5 seconds
+                setTimeout(() => {
+                    analyzingArticles.delete(newsId);
+                    analyzeArticle(newsId, btnEl);
+                }, 5000);
+                return; // Don't delete from analyzingArticles yet
+            }
             showToast('Analysis failed — click to retry', 'error');
             document.querySelectorAll(`.analyze-btn[data-id="${newsId}"]`).forEach(btn => {
                 btn.disabled = false;
@@ -1529,7 +1554,7 @@ async function fetchPredictionsForModal(newsId) {
         const content = document.getElementById('predictionsContent');
         if (!predTabBtn || !loader || !content) return;
 
-        const res = await fetch(`${API_BASE}/api/predictions?news_id=${newsId}`);
+        const res = await apiFetch(`${API_BASE}/api/predictions?news_id=${newsId}`);
         const json = await res.json();
 
         loader.style.display = 'none';
@@ -1934,7 +1959,7 @@ function renderNews(articles, prepend = false, append = false) {
 // ---- Fetch Sources ----
 async function fetchSources() {
     try {
-        const res = await fetch(`${API_BASE}/api/indian_sources`);
+        const res = await apiFetch(`${API_BASE}/api/indian_sources`);
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -2035,13 +2060,21 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
         if (indicator) indicator.style.display = 'flex';
     }
 
+    // Abort any previous in-flight fetch to prevent pile-up
+    if (_fetchAbortController) {
+        _fetchAbortController.abort();
+        _fetchAbortController = null;
+    }
+
     isFetching = true;
+    _fetchAbortController = new AbortController();
+    const signal = _fetchAbortController.signal;
 
     try {
         const offset = isLoadMore ? (currentPage + 1) * articlesPerPage : 0;
         // background refresh always checks page 0
         const fetchOffset = isBackgroundRefresh ? 0 : offset;
-        const fetchLimit = isBackgroundRefresh ? 50 : articlesPerPage;
+        const fetchLimit = isBackgroundRefresh ? 20 : articlesPerPage;
 
         let url = `${API_BASE}/api/indian_news?today_only=false&limit=${fetchLimit}&offset=${fetchOffset}`;
 
@@ -2061,7 +2094,7 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
             url += `&search=${encodeURIComponent(searchQuery)}`;
         }
 
-        const res = await fetch(url);
+        const res = await apiFetch(url, { signal });
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -2134,6 +2167,10 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
             consecutiveFailures = 0;
         }
     } catch (err) {
+        if (err.name === 'AbortError') {
+            // Fetch was intentionally cancelled — not an error
+            return;
+        }
         consecutiveFailures++;
         console.error('Failed to fetch news:', err);
         if (consecutiveFailures >= CONNECTION_FAIL_THRESHOLD) {
@@ -2141,6 +2178,7 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
         }
     } finally {
         isFetching = false;
+        _fetchAbortController = null;
         isLoadingMore = false;
         hideRefreshIndicator();
         const indicator = document.getElementById('loadMoreIndicator');
@@ -2167,7 +2205,7 @@ function updateDisplayCounts() {
 // ---- Fetch Footer Stats ----
 async function fetchStats() {
     try {
-        const res = await fetch(`${API_BASE}/api/indian_stats`);
+        const res = await apiFetch(`${API_BASE}/api/indian_stats`);
         const json = await res.json();
         if (json.status === 'success') {
             const d = json.data;
@@ -2329,10 +2367,133 @@ setInterval(() => {
     fetchEvents();
 }, REFRESH_INTERVAL);
 
+// ===== WebSocket Real-Time Sync =====
+// Connects to backend WS for instant cross-user updates (analysis results, new articles)
+(function initWebSocket() {
+    let ws = null;
+    let wsRetryCount = 0;
+    const WS_MAX_RETRY_DELAY = 30000; // 30s max backoff
+    let wsPingTimer = null;
+
+    function getWsUrl() {
+        // Derive ws:// or wss:// from API_BASE
+        let base = API_BASE || window.location.origin;
+        if (base.startsWith('https://')) {
+            return base.replace('https://', 'wss://') + '/ws';
+        } else if (base.startsWith('http://')) {
+            return base.replace('http://', 'ws://') + '/ws';
+        }
+        // Fallback: use current page protocol
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${proto}//${window.location.host}/ws`;
+    }
+
+    function connectWebSocket() {
+        try {
+            const url = getWsUrl();
+            console.log(`[WS] Connecting to ${url}...`);
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                console.log('[WS] Connected ✓');
+                wsRetryCount = 0;
+                // Start periodic ping to keep connection alive
+                clearInterval(wsPingTimer);
+                wsPingTimer = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send('ping');
+                    }
+                }, 25000); // ping every 25s
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleWsMessage(msg);
+                } catch (e) {
+                    // Ignore non-JSON messages (like pong)
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('[WS] Disconnected. Will retry...');
+                clearInterval(wsPingTimer);
+                scheduleReconnect();
+            };
+
+            ws.onerror = (err) => {
+                console.warn('[WS] Error:', err);
+                // onclose will fire after this, triggering reconnect
+            };
+        } catch (e) {
+            console.warn('[WS] Failed to create WebSocket:', e);
+            scheduleReconnect();
+        }
+    }
+
+    function scheduleReconnect() {
+        const delay = Math.min(1000 * Math.pow(2, wsRetryCount), WS_MAX_RETRY_DELAY);
+        wsRetryCount++;
+        console.log(`[WS] Reconnecting in ${delay}ms (attempt ${wsRetryCount})...`);
+        setTimeout(connectWebSocket, delay);
+    }
+
+    function handleWsMessage(msg) {
+        if (msg.type === 'article_updated' && msg.scope === 'indian') {
+            // Another user analyzed an Indian article — update our local state + DOM instantly
+            const updatedArticle = msg.article;
+            if (!updatedArticle || !updatedArticle.id) return;
+
+            console.log(`[WS] Article updated: #${updatedArticle.id}`);
+
+            // Parse analysis_data if stringified
+            if (typeof updatedArticle.analysis_data === 'string') {
+                try { updatedArticle.analysis_data = JSON.parse(updatedArticle.analysis_data); } catch (e) { }
+            }
+
+            // Update local newsData array
+            const existIdx = newsData.findIndex(a => a.id === updatedArticle.id);
+            if (existIdx !== -1) {
+                // Preserve featured label if it had one
+                updatedArticle.featuredType = newsData[existIdx].featuredType;
+                newsData[existIdx] = updatedArticle;
+            }
+
+            // Patch the DOM card if it exists
+            const existingCard = document.getElementById(`article-card-${updatedArticle.id}`);
+            if (existingCard) {
+                const isFeatured = existingCard.classList.contains('featured-card');
+                const newCard = createNewsCard(updatedArticle, 0, isFeatured);
+                existingCard.innerHTML = newCard.innerHTML;
+                existingCard.className = newCard.className;
+                existingCard.onclick = () => openModal(updatedArticle);
+            }
+
+            // If this article's modal is currently open, refresh it
+            if (modalOverlay && modalOverlay.classList.contains('active')) {
+                const modalTitleEl = modalBody && modalBody.querySelector('.modal-title');
+                if (modalTitleEl && modalTitleEl.textContent === updatedArticle.title) {
+                    openModal(updatedArticle);
+                }
+            }
+
+        } else if (msg.type === 'new_articles') {
+            // New articles arrived — trigger a smart refresh
+            console.log(`[WS] New articles notification received`);
+            fetchNews(false, true);
+        } else if (msg.type === 'pong') {
+            // Heartbeat response — no action needed
+        }
+    }
+
+    // Start WebSocket connection
+    connectWebSocket();
+})();
+
 // ---- Fetch Events ----
 async function fetchEvents() {
     try {
-        const res = await fetch(`${API_BASE}/api/events/india`);
+        const res = await apiFetch(`${API_BASE}/api/events/india`);
         const json = await res.json();
         if (json.status === 'success') {
             renderEvents(json.data);
@@ -2531,14 +2692,14 @@ function startChartRefresh(symbol) {
 // ---- Load first pair that has candle data ----
 async function loadFirstAvailablePair() {
     try {
-        const res = await fetch(`${API_BASE}/api/nse/pairs?q=TCS`);
+        const res = await apiFetch(`${API_BASE}/api/nse/pairs?q=TCS`);
         const json = await res.json();
         if (json.status === 'success' && json.data.length > 0) {
             await loadChart(json.data[0]);
             return;
         }
         // fallback: get any pair
-        const res2 = await fetch(`${API_BASE}/api/nse/pairs`);
+        const res2 = await apiFetch(`${API_BASE}/api/nse/pairs`);
         const json2 = await res2.json();
         if (json2.status === 'success' && json2.data.length > 0) {
             await loadChart(json2.data[0]);
@@ -2560,7 +2721,7 @@ async function doChartSearch(query) {
     }
     try {
         const url = `${API_BASE}/api/nse/pairs?q=${encodeURIComponent(query)}`;
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
         if (json.status !== 'success' || !json.data.length) {
             drop.innerHTML = `<div style="padding:10px 14px;color:#888;font-size:0.82rem;">No matching pairs found.</div>`;
@@ -2703,7 +2864,7 @@ async function fetchNewsMarkers(symbol) {
 
         const url = `${API_BASE}/api/nse/news-markers?symbol=${encodeURIComponent(pairOnly)}`;
         console.log('[NEWS MARKERS] Fetching from URL:', url);
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
         console.log('[NEWS MARKERS] Response:', json);
         if (json.status === 'success' && Array.isArray(json.data)) {
@@ -3072,7 +3233,7 @@ async function fetchCandleData(symbol) {
 
     try {
         const url = `${API_BASE}/api/nse/candles?symbol=${encodeURIComponent(symbol)}&limit=500`;
-        const res = await fetch(url);
+        const res = await apiFetch(url);
         const json = await res.json();
 
         if (json.status !== 'success' || !json.data || json.data.length === 0) {
@@ -3385,7 +3546,7 @@ let dynamicHolidays = null;
 
 async function fetchHolidays() {
     try {
-        const res = await fetch(`${API_BASE}/api/nse/holidays`);
+        const res = await apiFetch(`${API_BASE}/api/nse/holidays`);
         const json = await res.json();
         if (json.status === 'success') {
             dynamicHolidays = json.data;
@@ -3500,7 +3661,7 @@ function closeEventDetail() {
 
 async function fetchEventNews(eventId) {
     try {
-        const response = await fetch(`${API_BASE}/api/indian_news?event_id=${encodeURIComponent(eventId)}&limit=100`);
+        const response = await apiFetch(`${API_BASE}/api/indian_news?event_id=${encodeURIComponent(eventId)}&limit=100`);
         const json = await response.json();
 
         if (json.status === 'success' && json.data) {
