@@ -53,9 +53,14 @@ async def analyze_indian_news(title: str, description: str = "") -> Optional[Dic
                     logger.info(f"[TOKEN USAGE - INDIAN_FILTER] In: {response.usage_metadata.prompt_token_count} | Out: {response.usage_metadata.candidates_token_count} | Total: {response.usage_metadata.total_token_count}")
                 break
             except Exception as e:
-                if attempt < 2 and ("503" in str(e) or "UNAVAILABLE" in str(e) or "overload" in str(e).lower()):
-                    logger.warning(f"Gemini API overloaded. Retrying {attempt+1}/3 in 3s...")
+                err_msg = str(e).lower()
+                # Retry on transient network errors or Gemini API overloads
+                is_transient = any(x in err_msg for x in ["503", "unavailable", "overload", "getaddrinfo", "timeout", "connection", "11001"])
+                
+                if attempt < 2 and is_transient:
+                    logger.warning(f"Transient error during analysis ({type(e).__name__}). Retrying {attempt+1}/3 in 3s...")
                     await asyncio.sleep(3)
+                    continue
                 else:
                     raise e
 

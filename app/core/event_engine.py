@@ -44,9 +44,8 @@ ENTITIES = {
     "mahindra": "M&M", "wipro": "Wipro", "axis": "Axis Bank",
     "zomato": "Zomato", "paytm": "Paytm", "hal": "HAL",
     
-    # COMMODITIES & FX
+    # COMMODITIES & FX (India-relevant)
     "gold": "Gold", "oil": "Crude Oil", "brent": "Brent Oil",
-    "bitcoin": "Bitcoin", "ethereum": "Ethereum", "crypto": "Crypto",
     "dollar": "US Dollar", "dxy": "DXY", "rupee": "Rupee", "inr": "INR",
 }
 
@@ -58,9 +57,6 @@ ENTITY_TO_CAT = {
     "airtel": "INDIA", "tata motors": "INDIA", "tata steel": "INDIA", "mahindra": "INDIA",
     "wipro": "INDIA", "axis": "INDIA", "zomato": "INDIA", "paytm": "INDIA", "hal": "INDIA",
     "rupee": "INDIA", "inr": "INDIA", "das": "INDIA",
-    
-    "bitcoin": "CRYPTO", "ethereum": "CRYPTO", "crypto": "CRYPTO",
-    "solana": "CRYPTO", "binance": "CRYPTO", "coinbase": "CRYPTO",
 }
 
 BROAD_ENTITIES = {
@@ -68,7 +64,7 @@ BROAD_ENTITIES = {
     "US", "China", "Iran", "Israel", "Ukraine", "Russia", "Taiwan", "Middle East", "Red Sea",
     "Hamas", "Hezbollah", "Lebanon", "Houthi",
     "RBI", "SEBI", "NSE", "BSE", "Supreme Court", "ECI", "Finance Ministry",
-    "Gold", "Crude Oil", "Brent Oil", "Bitcoin", "Ethereum", "Crypto", "US Dollar", "DXY", "Rupee", "INR"
+    "Gold", "Crude Oil", "Brent Oil", "US Dollar", "DXY", "Rupee", "INR"
 }
 
 SYSTEMIC_ACTIONS = {

@@ -38,28 +38,42 @@ class FrontendHandler(http.server.SimpleHTTPRequestHandler):
         }
 
         try:
-            resp = requests.request(method=method, url=target_url, headers=fwd_headers, data=body, timeout=60)
-            self.send_response(resp.status_code)
+            # For SSE (Server-Sent Events), we MUST use stream=True and iter_content
+            # to prevent buffering the whole response in the proxy.
+            # No read timeout for streaming calls to allow long-lived connections.
+            is_streaming = method == "GET" and (self.path.endswith("_stream") or "stream" in self.path)
+            timeout = 10 if is_streaming else 60 
+            
+            with requests.request(
+                method=method, 
+                url=target_url, 
+                headers=fwd_headers, 
+                data=body, 
+                timeout=timeout, 
+                stream=is_streaming
+            ) as resp:
+                self.send_response(resp.status_code)
 
-            excluded = {
-                "connection",
-                "keep-alive",
-                "proxy-authenticate",
-                "proxy-authorization",
-                "te",
-                "trailers",
-                "transfer-encoding",
-                "upgrade",
-                "content-encoding",
-            }
-            for k, v in resp.headers.items():
-                if k.lower() in excluded:
-                    continue
-                self.send_header(k, v)
-            self.end_headers()
+                excluded = {
+                    "connection", "keep-alive", "proxy-authenticate", 
+                    "proxy-authorization", "te", "trailers", 
+                    "transfer-encoding", "upgrade", "content-encoding",
+                }
+                for k, v in resp.headers.items():
+                    if k.lower() in excluded:
+                        continue
+                    self.send_header(k, v)
+                self.end_headers()
 
-            if resp.content:
-                self.wfile.write(resp.content)
+                if is_streaming:
+                    # Stream chunks immediately to the client
+                    for chunk in resp.iter_content(chunk_size=None):
+                        if chunk:
+                            self.wfile.write(chunk)
+                            self.wfile.flush() # CRITICAL for real-time SSE
+                else:
+                    if resp.content:
+                        self.wfile.write(resp.content)
         except Exception as e:
             self.send_error(502, f"Backend proxy error: {e}")
 
@@ -107,8 +121,8 @@ if __name__ == "__main__":
         allow_reuse_address = True
 
     with ThreadingHTTPServer(("", PORT), FrontendHandler) as httpd:
-        print(f"\n  🚀 Indian News Intelligence Frontend running on http://localhost:{PORT}")
-        print(f"  🔗 Backend API expected at:  http://localhost:8000")
+        print(f"\n  STARTING: Indian News Intelligence Frontend running on http://localhost:{PORT}")
+        print(f"  LINK: Backend API expected at:  http://localhost:8000")
         print(f"  --------------------------------------------------")
         print(f"  Page Routes:")
         print(f"  - Home Platform:  http://localhost:{PORT}/")

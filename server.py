@@ -5,14 +5,43 @@ import uvicorn
 from datetime import datetime, timezone
 from typing import Optional, Any, List, Dict
 import os
+import sys
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from app.core.db import fetch_all, fetch_one, execute_query
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---- Startup Environment Validation ----
+REQUIRED_ENV_VARS = ["DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD"]
+missing = [v for v in REQUIRED_ENV_VARS if not os.getenv(v)]
+if missing:
+    print(f"❌ FATAL: Missing required environment variables: {', '.join(missing)}")
+    print("   Please set them in your .env file or environment.")
+    sys.exit(1)
+
+from app.core.db import fetch_all, fetch_one, execute_query, init_system_tables
+from app.core.realtime import db_listener
 
 # Thread pool for blocking database operations
 executor = ThreadPoolExecutor(max_workers=20)
 
 app = FastAPI(title="Indian News Intelligence API")
+
+@app.on_event("startup")
+async def startup_event():
+    """Initializes system tables on application boot."""
+    print("STARTING: Initializing Indian News Intelligence API...")
+    # Initialize real-time synchronization tables
+    await asyncio.get_event_loop().run_in_executor(executor, init_system_tables)
+    
+    # Start the continuous Postgres 'Strong Sync' Listener
+    asyncio.create_task(db_listener())
+
+# Initialization has been moved to the server's startup event 
+# to ensure cleaner dependency handling. 
+# init_system_tables()
+
 from app.api.indian_router import router as indian_router
 app.include_router(indian_router)
 SERVER_START = datetime.now(timezone.utc)
@@ -30,6 +59,8 @@ async def run_with_timeout(func, timeout_sec, *args):
         return await asyncio.wait_for(future, timeout=timeout_sec)
     except asyncio.TimeoutError:
         raise TimeoutError(f"Operation timed out after {timeout_sec} seconds")
+# CORS — In production, restrict allow_origins to your actual frontend domain(s)
+# e.g. allow_origins=["https://yourdomain.com"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

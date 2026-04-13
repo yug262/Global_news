@@ -8,7 +8,8 @@ import threading
 import time
 import requests
 import psycopg2
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 import pytz
 import csv
 from io import StringIO
@@ -91,8 +92,11 @@ def init_api_rotator():
         # ]
     
     if not api_keys:
-        print("⚠️ No API keys configured. API rotation will not work properly.")
-        print("ℹ️ Please set API_KEY_1 through API_KEY_37 environment variables.")
+        print("\n" + "="*60)
+        print("⚠️  WARNING: No API keys configured!")
+        print("   Set FINNHUB_API_KEY_1 through FINNHUB_API_KEY_37 env vars.")
+        print("   Running with dummy keys — API calls will fail with 401.")
+        print("="*60 + "\n")
         api_keys = [f"dummy_key_{i}" for i in range(1, 38)]  # Fallback dummy keys
     
     return APIKeyRotator(api_keys)
@@ -125,7 +129,6 @@ NSE_HOLIDAYS_2026 = {
     "2026-10-02": "Mahatma Gandhi Jayanti",
     "2026-10-20": "Dussehra",
     "2026-11-10": "Diwali-Balipratipada",
-    "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
     "2026-11-24": "Prakash Gurpurb Sri Guru Nanak Dev",
     "2026-12-25": "Christmas"
 }
@@ -181,7 +184,12 @@ def fetch_nse_holidays():
         print("ℹ️ Using hardcoded 2026 holiday fallback.")
     return False
 
-def get_market_status():
+class MarketStatus(NamedTuple):
+    is_open: bool
+    reason: str
+    sleep_secs: int
+
+def get_market_status() -> MarketStatus:
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
     date_str = now.strftime("%Y-%m-%d")
@@ -216,7 +224,7 @@ def get_market_status():
             reason = "Post-Market"
             
     if is_open:
-        return True, reason, 0
+        return MarketStatus(True, reason, 0)
         
     # Calculate Wait Seconds until next 9:15 AM
     target = now.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -227,15 +235,15 @@ def get_market_status():
         target += timedelta(days=1)
         
     sleep_secs = int((target - now).total_seconds())
-    return False, reason, sleep_secs
+    return MarketStatus(False, reason, sleep_secs)
 
 # =========================
 # DATABASE SETUP
 # =========================
 def check_db():
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        conn.close()
+        with psycopg2.connect(**DB_CONFIG) as conn:
+            pass  # Connection auto-closes via context manager
     except Exception as e:
         print(f"❌ Database connection failed: {e}")
         sys.exit(1)
@@ -304,13 +312,10 @@ def sync_companies():
 
 def get_stored_companies():
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        symbols = []
-        with conn.cursor() as cur:
-            cur.execute("SELECT symbol FROM nse_companies WHERE series IN ('EQ', 'BE', 'SM', 'ST', 'BZ')")
-            symbols = [row[0] for row in cur.fetchall()]
-        conn.close()
-        return symbols
+        with psycopg2.connect(**DB_CONFIG) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT symbol FROM nse_companies WHERE series IN ('EQ', 'BE', 'SM', 'ST', 'BZ')")
+                return [row[0] for row in cur.fetchall()]
     except Exception as e:
         print(f"❌ Error getting stored companies: {e}")
         return []
@@ -329,7 +334,7 @@ def process_tick(symbol, price):
     if price is None or price <= 0:
         return
         
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     bucket = get_bucket(now)
     key = (symbol, bucket)
 
@@ -343,7 +348,7 @@ def process_tick(symbol, price):
             c["close"] = price
 
 def flush_candles():
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     to_delete = []
     
     with candles_lock:
@@ -352,39 +357,36 @@ def flush_candles():
     if not stored_items:
         return
 
-    conn = psycopg2.connect(**DB_CONFIG)
-    conn.autocommit = True
-    with conn.cursor() as cur:
-        for (symbol, t), c in stored_items:
-            # Save candle once the 3-minute bucket has passed
-            if now >= t + timedelta(minutes=3):
-                # We strip the "NSE:" prefix for storage to keep db clean and match company table
-                clean_symbol = symbol.replace("NSE:", "")
-                cur.execute("""
-                INSERT INTO nse_candles_3m (symbol, time, open, high, low, close)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, time) DO NOTHING
-                """, (clean_symbol, t, c["open"], c["high"], c["low"], c["close"]))
-                to_delete.append((symbol, t))
-                print(f"💾 Saved 3m candle for {clean_symbol} at {t}")
+    with psycopg2.connect(**DB_CONFIG) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            for (symbol, t), c in stored_items:
+                # Save candle once the 3-minute bucket has passed
+                if now >= t + timedelta(minutes=3):
+                    # We strip the "NSE:" prefix for storage to keep db clean and match company table
+                    clean_symbol = symbol.replace("NSE:", "")
+                    cur.execute("""
+                    INSERT INTO nse_candles_3m (symbol, time, open, high, low, close)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, time) DO NOTHING
+                    """, (clean_symbol, t, c["open"], c["high"], c["low"], c["close"]))
+                    to_delete.append((symbol, t))
+                    print(f"💾 Saved 3m candle for {clean_symbol} at {t}")
 
     with candles_lock:
         for key in to_delete:
             if key in candles:
                 del candles[key]
-    conn.close()
 
 def cleanup_old_data():
     """Remove candles older than 24 hours from nse_candles_3m."""
     print("🧹 Cleaning up old NSE candle data...")
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            # Delete candles older than 24 hours
-            cur.execute("DELETE FROM nse_candles_3m WHERE time < %s", (datetime.utcnow() - timedelta(hours=24),))
-            print(f"✅ Cleanup complete: Removed {cur.rowcount} old candles.")
-        conn.close()
+        with psycopg2.connect(**DB_CONFIG) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM nse_candles_3m WHERE time < %s", (datetime.now(timezone.utc) - timedelta(hours=24),))
+                print(f"✅ Cleanup complete: Removed {cur.rowcount} old candles.")
     except Exception as e:
         print(f"❌ Cleanup Failed: {e}")
 
@@ -466,7 +468,9 @@ class TVStreamer:
             ist = pytz.timezone('Asia/Kolkata')
             now = datetime.now(ist)
             
-            is_open, reason, sleep_secs = get_market_status()
+            status = get_market_status()
+            is_open, reason, sleep_secs = status.is_open, status.reason, status.sleep_secs
+            
             if is_open:
                 print(f"🟢 [Stream {self.stream_id}] Market {reason} at {now.strftime('%H:%M:%S')}. Initiating connection...")
                 API_ROTATOR.set_market_status(True)  # Enable API rotation during market hours

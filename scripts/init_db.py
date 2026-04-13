@@ -61,6 +61,11 @@ CREATE TABLE IF NOT EXISTS indian_news (
     affected_entities JSONB,
     evidence JSONB,
     decision_trace JSONB DEFAULT '{}',
+    news_impact_level VARCHAR(50),
+    
+    -- Event Grouping (written by event_engine.py)
+    event_id VARCHAR(100),
+    event_title TEXT,
     
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -71,6 +76,7 @@ CREATE_INDIAN_NEWS_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_inews_hash ON indian_news(title_hash);",
     "CREATE INDEX IF NOT EXISTS idx_inews_source ON indian_news(source);",
     "CREATE INDEX IF NOT EXISTS idx_inews_analyzed ON indian_news(analyzed);",
+    "CREATE INDEX IF NOT EXISTS idx_inews_event_id ON indian_news(event_id);",
 ]
 
 

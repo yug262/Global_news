@@ -1,5 +1,5 @@
 // =========================================
-// CryptoWire — Frontend Logic (Production)
+// Indian News Intelligence — Frontend Logic
 // =========================================
 
 const DEFAULT_LOCAL_API = (() => {
@@ -13,6 +13,7 @@ const DEFAULT_LOCAL_API = (() => {
     }
     return '';
 })();
+// Using window.APP_CONFIG from config.js for unified configuration
 const API_BASE = (window.APP_CONFIG && typeof window.APP_CONFIG.BACKEND_URL === 'string' && window.APP_CONFIG.BACKEND_URL.trim())
     ? window.APP_CONFIG.BACKEND_URL.trim()
     : DEFAULT_LOCAL_API;
@@ -76,11 +77,11 @@ let isDrawerOpen = false;
 // ---- Theme Toggle ----
 function applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('cw-theme', theme);
+    localStorage.setItem('ini-theme', theme);
 }
 
 // Load saved theme (default: dark)
-const savedTheme = localStorage.getItem('cw-theme') || 'dark';
+const savedTheme = localStorage.getItem('ini-theme') || 'dark';
 applyTheme(savedTheme);
 
 themeToggle.addEventListener('click', () => {
@@ -702,9 +703,7 @@ function renderTradeActions(actions) {
     return html;
 }
 
-function renderForexPairs(article) {
-    return '';
-}
+
 
 function renderNewInfoBadge(article) {
     if (article.is_new_information == null) return '';
@@ -766,139 +765,7 @@ function renderAnalyzeButton(article) {
 }
 
 
-function renderSuggestionsTab(article) {
-    let suggestions = null;
 
-    // Try new JSONB structure
-    if (article.analysis_data && typeof article.analysis_data === 'object' && article.analysis_data.suggestions) {
-        suggestions = article.analysis_data.suggestions;
-    } else if (typeof article.analysis_data === 'string') {
-        try {
-            const parsed = JSON.parse(article.analysis_data);
-            if (parsed.suggestions) suggestions = parsed.suggestions;
-        } catch (e) { }
-    }
-
-    // Try fallback structure from flat DB
-    if (!suggestions && article.suggestions_data) {
-        if (typeof article.suggestions_data === 'object') {
-            suggestions = article.suggestions_data;
-        } else if (typeof article.suggestions_data === 'string') {
-            try { suggestions = JSON.parse(article.suggestions_data); } catch (e) { }
-        }
-    }
-
-    // If still nothing, but flat status exists, build it
-    if (!suggestions && article.suggestions_status) {
-        suggestions = {
-            status: article.suggestions_status,
-            summary: article.suggestions_summary || '',
-            buy: [], sell: [], watch: [], avoid: []
-        };
-    }
-
-    if (!suggestions) {
-        return '<p style="color:var(--text-muted); font-size:0.85rem; padding:12px 0">Suggestions unavailable or still analyzing.</p>';
-    }
-
-    const st = suggestions.status || 'failed';
-
-    if (st === 'failed') {
-        return '<p style="color:var(--text-muted); font-size:0.85rem; padding:12px 0">Suggestions unavailable (analysis failed).</p>';
-    }
-
-    if (st === 'no_clean_setup') {
-        return `
-            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:16px; margin-top:12px;">
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                    <span style="font-size:1.2rem;">⚖️</span>
-                    <strong style="color:var(--text-main); font-size:1rem;">No Clean Setup</strong>
-                </div>
-                <p style="color:var(--text-secondary); font-size:0.9rem; line-height:1.5;">${escapeHtml(suggestions.summary || 'No high-conviction trade idea based on this event.')}</p>
-            </div>
-        `;
-    }
-
-    let html = '';
-
-    if (suggestions.summary) {
-        html += `<p style="color:var(--text-secondary); font-size:0.9rem; margin-bottom:16px; line-height:1.5; padding:0 4px;">${escapeHtml(suggestions.summary)}</p>`;
-    }
-
-    const groups = [
-        { key: 'buy', label: 'Buy / Long', color: 'var(--bullish)', bg: 'rgba(0, 212, 170, 0.1)', border: 'rgba(0, 212, 170, 0.4)' },
-        { key: 'sell', label: 'Sell / Short', color: 'var(--bearish)', bg: 'rgba(255, 71, 87, 0.1)', border: 'rgba(255, 71, 87, 0.4)' },
-        { key: 'watch', label: 'Watchlist', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)', border: 'rgba(59, 130, 246, 0.4)' },
-        { key: 'avoid', label: 'Avoid / Danger', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.4)' }
-    ];
-
-    let hasItems = false;
-
-    for (const g of groups) {
-        const items = suggestions[g.key];
-        if (Array.isArray(items) && items.length > 0) {
-            hasItems = true;
-            html += `
-                <div class="analysis-sub-section" style="margin-bottom:20px;">
-                    <div class="analysis-bars-title" style="color:${g.color}; border-bottom:1px solid ${g.border}; padding-bottom:4px;">
-                        ${g.label.toUpperCase()}
-                    </div>
-                    <div style="display:flex; flex-direction:column; gap:12px; margin-top:12px;">
-            `;
-
-            items.forEach(item => {
-                let asset = 'Unknown Asset';
-                let reason = '';
-                let logic = '';
-                let invalid = '';
-                let time_val = '';
-                let exp_move = '';
-                let confidence = '';
-
-                if (typeof item === 'string') {
-                    asset = 'Trade Idea';
-                    reason = item;
-                } else if (typeof item === 'object' && item !== null) {
-                    asset = item.asset || item.pair || item.index || item.symbol || item.name || 'Unknown Asset';
-                    reason = item.reasoning || item.reason || '';
-                    logic = item.market_logic || '';
-                    invalid = item.invalidation || '';
-                    time_val = item.time_window || '';
-                    exp_move = item.expected_move_pct || '';
-                    confidence = item.confidence || '';
-                }
-
-                const move = exp_move ? `<span style="background:${g.bg}; color:${g.color}; font-size:0.75rem; font-weight:700; padding:2px 8px; border-radius:4px;">🎯 Target: ${escapeHtml(String(exp_move))}</span>` : '';
-                const time = time_val ? `<span style="font-size:0.75rem; color:var(--text-muted); display:flex; align-items:center; gap:4px;">⏱️ ${escapeHtml(time_val)}</span>` : '';
-                const conf = confidence ? `<span style="font-size:0.7rem; text-transform:uppercase; border:1px solid var(--border-color); padding:1px 6px; border-radius:4px; color:var(--text-secondary);">Conf: ${escapeHtml(confidence)}</span>` : '';
-
-                html += `
-                    <div style="border-left:3px solid ${g.border}; padding-left:12px; background:var(--bg-main); padding:12px; border-radius:0 6px 6px 0; border-top:1px solid var(--border-color); border-right:1px solid var(--border-color); border-bottom:1px solid var(--border-color);">
-                        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;">
-                            <div style="font-weight:700; font-size:1.05rem; color:var(--text-main);">${escapeHtml(asset)}</div>
-                            <div style="display:flex; gap:6px; align-items:center;">${conf} ${move}</div>
-                        </div>
-                        ${time}
-                        
-                        <div style="margin-top:10px; font-size:0.85rem; line-height:1.5;">
-                            ${reason ? `<p style="color:var(--text-secondary); margin-bottom:8px;"><strong style="color:var(--text-main);">Reasoning:</strong> ${escapeHtml(reason)}</p>` : ''}
-                            ${logic ? `<p style="color:var(--text-secondary); margin-bottom:8px;"><strong style="color:var(--text-main);">Market Logic:</strong> ${escapeHtml(logic)}</p>` : ''}
-                            ${invalid ? `<p style="color:#f59e0b; margin-top:8px; border-top:1px dashed var(--border-color); padding-top:8px;"><strong>⚠️ Invalidation:</strong> ${escapeHtml(invalid)}</p>` : ''}
-                        </div>
-                    </div>
-                `;
-            });
-
-            html += `</div></div>`;
-        }
-    }
-
-    if (!hasItems) {
-        return '<p style="color:var(--text-muted); font-size:0.85rem; padding:12px 0">No specific trade suggestions found.</p>';
-    }
-
-    return html;
-}
 
 function renderCardAnalysis(article) {
     if (!article.impact_score) return '';
@@ -978,7 +845,7 @@ async function analyzeArticle(newsId, btnEl) {
     });
 
     try {
-        const res = await fetchWithTimeout(`${API_BASE}/api/indian_analyze/${newsId}`, { method: 'POST' });
+        const res = await fetchWithTimeout(`${API_BASE}/api/indian_analyze/${newsId}`, { method: 'POST' }, 180000);
         const json = await res.json();
 
         if (json.status === 'success') {
@@ -1722,51 +1589,9 @@ async function fetchSources() {
 
 function formatSymbol(sym) {
     if (!sym) return '';
-    sym = sym.toUpperCase();
+    sym = sym.toUpperCase().trim();
 
-    // Hardcoded common indices/commodities
-    const friendlyNames = {
-        'GC=F': 'Gold',
-        'SI=F': 'Silver',
-        'CL=F': 'Crude Oil',
-        'NG=F': 'Natural Gas',
-        '^GSPC': 'S&P 500',
-        '^DJI': 'Dow Jones',
-        '^IXIC': 'Nasdaq',
-        '^NDX': 'Nasdaq 100',
-        '^RUT': 'Russell 2000',
-        '^FTSE': 'FTSE 100',
-        '^N225': 'Nikkei 225',
-        'BTC-USD': 'Bitcoin',
-        'ETH-USD': 'Ethereum',
-        'SOL-USD': 'Solana',
-        'DX-Y.NYB': 'US Dollar Index',
-        'ZN=F': '10-Year T-Note'
-    };
-
-    if (friendlyNames[sym]) {
-        return friendlyNames[sym];
-    }
-
-    // Try stripping suffixes for Forex / Crypto if no exact match
-    sym = sym.trim();
-    if (sym.endsWith('=X')) {
-        let pair = sym.replace('=X', '').trim();
-        // e.g. USDCNY -> USD/CNY
-        if (pair.length === 6) {
-            return `${pair.substring(0, 3)}/${pair.substring(3, 6)}`;
-        }
-        return pair;
-    }
-
-    if (sym.endsWith('-USD')) {
-        return sym.replace('-USD', '');
-    }
-
-    if (sym.endsWith('=F')) {
-        return sym.replace('=F', ' Futures');
-    }
-
+    // NSE stocks: just return the symbol as-is
     return sym;
 }
 
@@ -1860,7 +1685,7 @@ async function fetchNews(isLoadMore = false, isBackgroundRefresh = false) {
         if (indicator) indicator.style.display = 'none';
 
         const sentinel = document.getElementById('infiniteScrollSentinel');
-        if (sentinel) sentinel.style.display = hasMoreArticles ? 'block' : 'block';
+        if (sentinel) sentinel.style.display = hasMoreArticles ? 'block' : 'none';
     }
 }
 
@@ -2032,7 +1857,63 @@ async function init() {
 
     setTimeout(() => fetchStats(), 100);
     setTimeout(() => fetchHolidays(), 200);
+
+    // Initialize Real-Time Sync (Free SSE)
+    initRealTimeStream();
 }
+
+function refreshDashboard(isBackground = true) {
+    if (isFetching) return;
+    console.log("Refreshing dashboard (Real-time sync)...");
+    fetchSources();
+    fetchNews(false, isBackground);
+    fetchStats();
+    fetchEvents();
+}
+
+function initRealTimeStream() {
+    console.log("[SYNC] Connecting to Free Real-Time Sync...");
+    const streamUrl = `${API_BASE}/api/indian_stream`;
+    
+    try {
+        const eventSource = new EventSource(streamUrl);
+
+        // Sync Safety: Refresh immediately when connection opens to catch missed events
+        eventSource.onopen = () => {
+            console.log("[SYNC] Connection established. Performing safety refresh...");
+            refreshDashboard(true);
+        };
+
+        // Handle specific push events from Postgres LISTEN/NOTIFY
+        eventSource.addEventListener('news_created', (e) => {
+            const data = JSON.parse(e.data);
+            console.log("[SYNC] Event: news_created", data);
+            refreshDashboard(true);
+        });
+
+        eventSource.addEventListener('analysis_completed', (e) => {
+            const data = JSON.parse(e.data);
+            console.log("[SYNC] Event: analysis_completed", data);
+            refreshDashboard(true);
+        });
+
+        eventSource.addEventListener('analysis_failed', (e) => {
+            const data = JSON.parse(e.data);
+            console.log("[SYNC] Event: analysis_failed", data);
+            refreshDashboard(true);
+        });
+
+        eventSource.onerror = (err) => {
+            console.warn("[SYNC] Connection lost. Reconnecting in 5s...");
+            eventSource.close();
+            setTimeout(initRealTimeStream, 5000);
+        };
+    } catch (err) {
+        console.error("[SYNC] Fatal error initializing stream:", err);
+    }
+}
+
+
 
 async function fetchWithTimeout(url, options = {}, timeout = 12000) {
     const controller = new AbortController();
@@ -2041,6 +1922,10 @@ async function fetchWithTimeout(url, options = {}, timeout = 12000) {
     try {
         const response = await fetch(url, {
             ...options,
+            headers: {
+                ...options.headers,
+                'ngrok-skip-browser-warning': 'true'
+            },
             signal: controller.signal
         });
         return response;
@@ -2051,13 +1936,49 @@ async function fetchWithTimeout(url, options = {}, timeout = 12000) {
 
 init();
 
-// ---- Auto-refresh (Smart Refresh) ----
-setInterval(() => {
-    fetchSources();
-    fetchNews(false, true); // isLoadMore=false, isBackgroundRefresh=true
-    fetchStats();
-    fetchEvents();
-}, REFRESH_INTERVAL);
+// ---- Auto-refresh (Smart Refresh Marker) ----
+let currentDataMarker = null;
+let isFirstMarkerCheck = true;
+let isCheckingMarker = false;
+
+async function checkDataMarker() {
+    if (isCheckingMarker) return;
+    isCheckingMarker = true;
+
+    try {
+        const res = await fetchWithTimeout(`${API_BASE}/api/indian_marker`, {}, 5000);
+        const json = await res.json();
+
+        if (json.status === 'success' && json.marker) {
+            const newMarker = json.marker;
+
+            // Empty database state
+            if (newMarker === "empty") return;
+
+            if (currentDataMarker !== newMarker) {
+                // If the feed is already fetching because of manual user action (scroll/click), wait for next cycle
+                if (!isFirstMarkerCheck && isFetching) {
+                    return; 
+                }
+
+                if (!isFirstMarkerCheck) {
+                    // Marker changed, trigger smart pull
+                    refreshDashboard(true);
+                }
+
+                currentDataMarker = newMarker;
+                isFirstMarkerCheck = false;
+            }
+        }
+    } catch (e) {
+        // Silently fail, connection banners handle major network breakages
+    } finally {
+        isCheckingMarker = false;
+    }
+}
+
+// Polling deactivated in favor of event-driven Pusher signals.
+// setInterval(checkDataMarker, REFRESH_INTERVAL);
 
 // ---- Fetch Events ----
 async function fetchEvents() {
@@ -2322,7 +2243,6 @@ function selectChartPair(symbol) {
     // Sanitize symbol: NSE stocks usually don't need "/" etc.
     let cleanSymbol = symbol.split(':').pop().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    console.log('[CHART] Selecting pair:', symbol, '-> Clean:', cleanSymbol);
     currentChartSymbol = cleanSymbol;
 
     // Open the chart panel
@@ -2354,8 +2274,6 @@ function parseToUnixSec(timeStr) {
 async function loadChart(symbol) {
     if (!symbol) return;
 
-    console.log('[LOAD CHART] Starting loadChart with symbol:', symbol);
-
     // Track selected pair
     currentChartSymbol = symbol;
     stopChartRefresh();
@@ -2364,20 +2282,15 @@ async function loadChart(symbol) {
 
     const data = await fetchCandleData(symbol);
     if (!data) {
-        console.log('[LOAD CHART] No candle data received');
         return;
     }
 
-    console.log('[LOAD CHART] Rendering chart with', data.length, 'candles');
-    window.chartCandleData = data; // Store globally for overlay tracking
+    window.chartCandleData = data;
     renderLWChart(data);
     updateChartStats(symbol, data);
 
-    // Overlay news markers on chart
-    console.log('[LOAD CHART] Calling overlayNewsMarkers...');
     await overlayNewsMarkers(symbol);
 
-    console.log('[LOAD CHART] Starting chart refresh');
     startChartRefresh(symbol);
 }
 
@@ -2435,13 +2348,9 @@ async function fetchNewsMarkers(symbol) {
         console.log('[NEWS MARKERS] Fetching from URL:', url);
         const res = await fetch(url);
         const json = await res.json();
-        console.log('[NEWS MARKERS] Response:', json);
         if (json.status === 'success' && Array.isArray(json.data)) {
-            console.log('[NEWS MARKERS] Success! Found', json.data.length, 'news items');
-            console.log('[NEWS MARKERS] Data:', json.data);
             return json.data;
         }
-        console.log('[NEWS MARKERS] No data in response or invalid status');
         return [];
     } catch (err) {
         console.error('fetchNewsMarkers error:', err);

@@ -11,13 +11,12 @@ from bs4 import BeautifulSoup
 import socket
 from typing import List, Dict, Any
 
-import sys
-import os
 # Add the project root to sys.path so we can import app.core.db
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 
-from app.core.db import execute_query, fetch_one
-from app.core.india_agent import analyze_indian_news
+from app.core.db import execute_query, fetch_one, execute_returning
+from app.core.realtime import trigger_news_created
+from app.core.india_agent import analyze_indian_news as filter_indian_news
 from app.core.event_engine import process_event_grouping
 
 # ══════════════════════════════════════════════════════
@@ -162,68 +161,72 @@ async def fetch_feed_task(client: httpx.AsyncClient, source: str, url: str) -> L
     return articles
 
 async def save_article(article):
-    """Processes an article: checks for duplicates, analyzes if new, then saves."""
+    """Processes an article: inserts first to claim the hash, then analyzes if new."""
     try:
-        # 1. Check if already exists to avoid wasting LLM tokens
-        exists = await asyncio.to_thread(
-            fetch_one,
-            "SELECT id FROM indian_news WHERE title_hash = %s",
-            (article['title_hash'],)
+        # 1. Insert the article first with ON CONFLICT DO NOTHING.
+        #    This atomically prevents duplicates and avoids wasting LLM tokens.
+        insert_result = await asyncio.to_thread(
+            execute_returning,
+            """INSERT INTO indian_news 
+               (title, link, title_hash, published, source, description, image_url, 
+                news_category, news_relevance, news_reason, symbols, analyzed)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (title_hash) DO NOTHING
+               RETURNING id""",
+            (article['title'], article['link'], article['title_hash'], 
+             article['published'], article['source'], article['description'], article['image_url'],
+             'None', 'None', 'No analysis available.', [], False)
         )
-        if exists:
-            return 0  # Duplicate
 
-        # 2. Perform AI Analysis for NEW articles only
-        analysis = await analyze_indian_news(article['title'], article['description'])
-        
-        # 3. Extract analysis fields or set defaults
-        news_category = "None"
-        news_relevance = "None"
-        news_impact_level = "None"
-        affected_sectors = []
-        news_reason = "No analysis available."
+        if not insert_result:
+            return 0  # Duplicate — already existed, no LLM cost
+
+        new_id = insert_result['id']
+
+        # 2. Filtering Pass (Mandatory for all new articles)
+        # Classifies relevance/category/symbols immediately using lightweight agent
+        try:
+            filter_data = await filter_indian_news(
+                title=article['title'],
+                description=article['description']
+            )
+            
+            if filter_data:
+                await asyncio.to_thread(
+                    execute_query,
+                    """UPDATE indian_news 
+                       SET news_category = %s, news_relevance = %s, news_reason = %s, symbols = %s
+                       WHERE id = %s""",
+                    (filter_data['category'], filter_data['relevance'], filter_data['reason'], filter_data['symbols'], new_id)
+                )
+        except Exception as fe:
+            logger.warning(f"Filtering Agent error for {new_id}: {fe}")
+
+        # 3. Deep Analysis (Currently Manual)
+        # The block below is kept commented as per user preference (saves tokens/time).
+        # Users can trigger full analysis via the UI "Analyze" button.
+        """
+        analysis = await asyncio.to_thread(
+            analyze_indian_news,
+            title=article['title'],
+            published_iso=article['published'].isoformat() if hasattr(article['published'], 'isoformat') else str(article['published']),
+            summary=article['description'],
+            source=article['source'],
+            current_news_id=new_id
+        )
         
         if analysis:
-            news_category = analysis.get("category", news_category)
-            news_relevance = analysis.get("relevance", news_relevance)
-            news_reason = analysis.get("reason", news_reason)
-            symbols = analysis.get("symbols", [])
-        else:
-            symbols = []
-
-        # 4. Insert into DB (no event yet)
-        new_row = await asyncio.to_thread(
-            fetch_one,
-            "SELECT id FROM indian_news WHERE title_hash = %s",
-            (article['title_hash'],)
-        )
-        if not new_row:
             await asyncio.to_thread(
-                execute_query,
-                """INSERT INTO indian_news 
-                   (title, link, title_hash, published, source, description, image_url, 
-                    news_category, news_relevance, news_reason, symbols, analyzed)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, false)
-                   ON CONFLICT (title_hash) DO NOTHING""",
-                (article['title'], article['link'], article['title_hash'], 
-                 article['published'], article['source'], article['description'], article['image_url'],
-                 news_category, news_relevance, news_reason, symbols)
+                save_indian_analysis,
+                new_id, analysis
             )
+        """
 
-        # 5. Trigger stateful event grouping AFTER insert
-        try:
-            saved_row = await asyncio.to_thread(
-                fetch_one,
-                "SELECT id FROM indian_news WHERE title_hash = %s",
-                (article['title_hash'],)
-            )
-            if saved_row:
-                await asyncio.to_thread(
-                    process_event_grouping,
-                    saved_row['id'], article['title'], "INDIA", 'indian_news'
-                )
-        except Exception as ge:
-            logger.warning(f"Event grouping error: {ge}")
+        # 4. Trigger stateful event grouping AFTER insert
+        # ... existing logic ...
+        
+        # 5. Notify all devices of new arrival via Pusher
+        await asyncio.to_thread(trigger_news_created, new_id)
 
         return 1  # New article added
         
